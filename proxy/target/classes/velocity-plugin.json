@@ -1,0 +1,7 @@
+{
+  "id": "sectorsystem-proxy",
+  "name": "SectorSystem Proxy",
+  "version": "2.0.0",
+  "authors": ["dzokuxd"],
+  "main": "pl.dzoku.sectorsystem.SectorProxyPlugin"
+}
