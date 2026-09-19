@@ -1,0 +1,31 @@
+name: SectorSystem
+version: '2.1.0'
+main: pl.dzoku.sectorsystem.SectorSystemPlugin
+api-version: '1.21'
+description: Closed sectors with full player state synchronization
+authors:
+  - dzokuxd
+
+commands:
+  sector:
+    description: Sector management and transfers
+    permission: sectorsystem.use
+    usage: /sector <sektor|list|info|restart>
+  spawn:
+    description: Teleport na spawn z 30s odliczaniem
+    permission: sectorsystem.use
+
+  g:
+    description: Komendy gildii
+    usage: /g <zaloz|zapros|dom|...>
+    aliases: [gildia, guild]
+  tnt:
+    description: Przelaczanie TNT (admin)
+    usage: /tnt [on|off]
+permissions:
+  sectorsystem.admin:
+    description: Access to admin commands
+    default: op
+  sectorsystem.use:
+    description: Access to player commands
+    default: true
