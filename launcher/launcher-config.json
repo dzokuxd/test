@@ -1,0 +1,55 @@
+{
+  "servers": {
+    "velocity": {
+      "enabled": true,
+      "jar": "proxy/target/proxy-2.0.0-all.jar",
+      "workingDir": "velocity-server",
+      "jvmArgs": [
+        "-Xms512M",
+        "-Xmx512M"
+      ],
+      "autoRestart": true,
+      "startDelay": 0
+    },
+    "guild": {
+      "enabled": true,
+      "jar": "paper/target/SectorSystem-2.1.0.jar",
+      "workingDir": "paper-guild",
+      "jvmArgs": [
+        "-Xms2G",
+        "-Xmx2G",
+        "-XX:+UseG1GC"
+      ],
+      "autoRestart": true,
+      "startDelay": 5
+    },
+    "spawn": {
+      "enabled": true,
+      "jar": "paper/target/SectorSystem-2.1.0.jar",
+      "workingDir": "paper-spawn",
+      "jvmArgs": [
+        "-Xms1G",
+        "-Xmx1G",
+        "-XX:+UseG1GC"
+      ],
+      "autoRestart": true,
+      "startDelay": 5
+    },
+    "afk": {
+      "enabled": true,
+      "jar": "paper/target/SectorSystem-2.1.0.jar",
+      "workingDir": "paper-afk",
+      "jvmArgs": [
+        "-Xms512M",
+        "-Xmx512M"
+      ],
+      "autoRestart": true,
+      "startDelay": 5
+    }
+  },
+  "settings": {
+    "logDir": "logs",
+    "pidDir": "pids",
+    "shutdownTimeoutSeconds": 30
+  }
+}
