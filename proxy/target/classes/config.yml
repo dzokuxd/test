@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════
+# SectorSystem Proxy Configuration
+# ═══════════════════════════════════════════════════════════
+# UWAGA: Standardowy YAML nie obsługuje ${VAR:default}.
+# Użyj zwykłych wartości. Jeśli używasz Dockera, nadpisz ten
+# plik przed startem serwera (np. przez envsubst).
+# ═══════════════════════════════════════════════════════════
+
+limbo:
+  name: "limbo"
+  display-name: "&7⏳ Poczekalnia"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  max-connections: 10
+  timeout-ms: 2000
+
+nats:
+  url: "nats://localhost:4222"
+
+mysql:
+  enabled: true
+  host: "localhost"
+  port: 3306
+  database: "sectorsystem"
+  username: "root"
+  password: ""
+  pool-size: 10
+
+auth:
+  login-timeout: 60
+  max-attempts: 5
+  remember-ip-hours: 24
+  auto-register: false
+  premium-skip-login: true
+  whitelist:
+    enabled: false
+
+queue:
+  position-update-interval: 5
+  kick-after-seconds: 300
+
+health-check:
+  interval-seconds: 15
+  offline-threshold: 3
+  heartbeat-timeout-seconds: 45
+
+sectors:
+  default: "guild"
+  guild:
+    max-players: 100
+    priority: 1
+  spawn:
+    max-players: 50
+    priority: 2
+  afk:
+    max-players: 30
+    priority: 3
+
+restart:
+  grace-period-seconds: 60
+  max-attempts: 3
+  seconds-per-join: 3
+
+debug:
+  log-transfers: true
+  log-auth: true
+  log-queue: true
