@@ -1,0 +1,83 @@
+# ═══════════════════════════════════════════════════════════
+# SectorSystem Paper Configuration
+# ═══════════════════════════════════════════════════════════
+
+current-sector: "guild"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  database: 0
+
+nats:
+  url: "nats://localhost:4222"
+
+mysql:
+  enabled: true
+  host: "mysql.titanaxe.com"
+  port: 3306
+  database: "srv325281"
+  username: "srv325281"
+  password: "Vaw4wCB4"
+
+# ← TO BRAKOWAŁO! Dodaj tę sekcję:
+sectors:
+  guild:
+    display-name: "Sektor Gildii"
+    max-players: 100
+    bounded: true
+    bounds:
+      min-x: -1000
+      max-x: 1000
+      min-y: -64
+      max-y: 320
+      min-z: -1000
+      max-z: 1000
+    fallback: "spawn"
+    pvp: true
+    build: true
+    transfer-cooldown-ms: 60000
+  spawn:
+    display-name: "Spawn"
+    max-players: 50
+    bounded: false
+    fallback: "spawn"
+    pvp: false
+    build: false
+    transfer-cooldown-ms: 30000
+  afk:
+    display-name: "AFK"
+    max-players: 30
+    bounded: false
+    fallback: "spawn"
+    pvp: false
+    build: false
+    transfer-cooldown-ms: 10000
+
+limits:
+  guild: 100
+  spawn: 50
+  afk: 30
+
+spawn-stick:
+  name: "&e&lPatyk Teleportu na Spawn"
+  delay-seconds: 30
+  lore:
+    - "&7Kliknij prawym aby teleportowac na spawn"
+    - "&cNie ruszaj sie przez 30s!"
+
+world-sync:
+  enabled: true
+
+global-chat:
+  enabled: true
+  prefix: "&8[&6Global&8]&r "
+
+scoreboard:
+  enabled: true
+
+tablist:
+  enabled: true
+  header: "&6&lSectorSystem"
+  footer: "&7Sektor: &e%sector%"
