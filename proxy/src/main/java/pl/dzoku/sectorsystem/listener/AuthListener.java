@@ -37,6 +37,7 @@ public class AuthListener {
 
         AuthManager.isPremiumAsync(player.getUsername()).thenAccept(isPremium -> {
             AuthManager.createSession(player, isPremium);
+            AuthManager.ensurePlayerRow(player, isPremium);
             AuthManager.AuthSession session = AuthManager.getSession(player.getUsername());
 
             if (!session.isLoggedIn) {

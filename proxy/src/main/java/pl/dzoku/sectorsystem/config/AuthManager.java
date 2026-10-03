@@ -52,6 +52,46 @@ public class AuthManager {
         loginAttempts.remove(username.toLowerCase());
     }
 
+    // ── NOWE: zapisuje KAŻDEGO gracza (premium i no-premium) przy wejściu ──
+    /**
+     * Premium: premium=TRUE, registered=TRUE, password=NULL (nie musi się rejestrować).
+     * No-premium: premium=FALSE, registered=FALSE (dopiero /register ustawi hasło i registered=TRUE).
+     */
+    public static void ensurePlayerRow(Player player, boolean isPremium) {
+        CompletableFuture.runAsync(() -> {
+            MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
+            if (mysql == null || !mysql.isEnabled()) return;
+            String ip = player.getRemoteAddress().getAddress().getHostAddress();
+            try (Connection c = mysql.getConnection()) {
+                int updated;
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE auth_players SET premium=?, lastIP=? WHERE username=?")) {
+                    ps.setBoolean(1, isPremium);
+                    ps.setString(2, ip);
+                    ps.setString(3, player.getUsername());
+                    updated = ps.executeUpdate();
+                }
+                if (updated == 0) {
+                    try (PreparedStatement ins = c.prepareStatement(
+                            "INSERT INTO auth_players (uuid, username, premium, password, registered, firstIP, lastIP, rememberIP) " +
+                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                        ins.setString(1, player.getUniqueId().toString());
+                        ins.setString(2, player.getUsername());
+                        ins.setBoolean(3, isPremium);
+                        ins.setString(4, "");          // premium nie ma hasła -> pusty string (kolumna NOT NULL)
+                        ins.setBoolean(5, isPremium);  // premium = od razu zalogowany, cracked = czeka na /register
+                        ins.setString(6, ip);
+                        ins.setString(7, ip);
+                        ins.setString(8, "");          // rememberIP -> pusty string zamiast NULL
+                        ins.executeUpdate();
+                    }
+                }
+            } catch (Exception e) {
+                SectorProxyPlugin.getInstance().getLogger().severe("Blad zapisu auth_players: " + e.getMessage());
+            }
+        });
+    }
+
     public static CompletableFuture<Boolean> isPremiumAsync(String username) {
         return CompletableFuture.supplyAsync(() -> {
             String lower = username.toLowerCase();
@@ -67,8 +107,7 @@ public class AuthManager {
                 premiumCache.put(lower, isPremium);
                 return isPremium;
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd sprawdzania premium: " + e.getMessage());
                 return false;
             }
         });
@@ -77,7 +116,6 @@ public class AuthManager {
     public static boolean isRegistered(String username) {
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
         if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
             try (Connection c = mysql.getConnection();
                  PreparedStatement ps = c.prepareStatement("SELECT registered FROM auth_players WHERE username=?")) {
                 ps.setString(1, username);
@@ -85,9 +123,7 @@ public class AuthManager {
                     return rs.next() && rs.getBoolean("registered");
                 }
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd isRegistered: " + e.getMessage());
             }
         }
         return false;
@@ -97,7 +133,6 @@ public class AuthManager {
         String ip = player.getRemoteAddress().getAddress().getHostAddress();
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
         if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
             try (Connection c = mysql.getConnection();
                  PreparedStatement ps = c.prepareStatement("SELECT rememberIP FROM auth_players WHERE username=?")) {
                 ps.setString(1, player.getUsername());
@@ -108,58 +143,54 @@ public class AuthManager {
                     }
                 }
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd isIPRemembered: " + e.getMessage());
             }
         }
         return false;
     }
 
+    // ── POPRAWIONE: UPDATE jesli wiersz juz istnieje (bo ensurePlayerRow go stworzyl), inaczej INSERT ──
     public static boolean register(Player player, String password) {
-        pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("Rejestracja gracza: " + player.getUsername());
-        
         AuthSession session = getSession(player.getUsername());
-        if (session == null) {
-            pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Session jest NULL dla: " + player.getUsername());
-            return false;
-        }
-        if (session.isPremium) {
-            pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().warning("Gracz jest PREMIUM: " + player.getUsername());
-            return false;
-        }
-        pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("Session OK, isPremium=false");
-        
+        if (session == null) return false;
+        if (session.isPremium) return false;
+
         String hashed = hashPassword(password);
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
-        if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
-            try (Connection c = mysql.getConnection();
-                 PreparedStatement ps = c.prepareStatement(
-                     "INSERT INTO auth_players (uuid, username, premium, password, registered, firstIP, lastIP, rememberIP) VALUES (?, ?, FALSE, ?, TRUE, ?, ?, ?)")) {
-                ps.setString(1, player.getUniqueId().toString());
-                ps.setString(2, player.getUsername());
-                ps.setString(3, hashed);
-                ps.setString(4, session.ip);
-                ps.setString(5, session.ip);
-                ps.setString(6, session.ip);
-                ps.executeUpdate();
-                session.isLoggedIn = true;
-                return true;
-            } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+        if (mysql == null || !mysql.isEnabled()) return false;
+        try (Connection c = mysql.getConnection()) {
+            int updated;
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE auth_players SET password=?, registered=TRUE, lastIP=? WHERE username=?")) {
+                ps.setString(1, hashed);
+                ps.setString(2, session.ip);
+                ps.setString(3, player.getUsername());
+                updated = ps.executeUpdate();
             }
+            if (updated == 0) {
+                try (PreparedStatement ins = c.prepareStatement(
+                        "INSERT INTO auth_players (uuid, username, premium, password, registered, firstIP, lastIP, rememberIP) " +
+                                "VALUES (?, ?, FALSE, ?, TRUE, ?, ?, NULL)")) {
+                    ins.setString(1, player.getUniqueId().toString());
+                    ins.setString(2, player.getUsername());
+                    ins.setString(3, hashed);
+                    ins.setString(4, session.ip);
+                    ins.setString(5, session.ip);
+                    ins.executeUpdate();
+                }
+            }
+            session.isLoggedIn = true;
+            return true;
+        } catch (Exception e) {
+            SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
+            return false;
         }
-        return false;
     }
 
     public static boolean login(Player player, String password) {
         AuthSession session = getSession(player.getUsername());
         if (session == null || session.isPremium) return false;
 
-        // Sprawdź limit prób logowania
         String lower = player.getUsername().toLowerCase();
         int attempts = loginAttempts.getOrDefault(lower, 0);
         if (attempts >= MAX_LOGIN_ATTEMPTS) {
@@ -169,10 +200,9 @@ public class AuthManager {
         String hashed = hashPassword(password);
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
         if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
             try (Connection c = mysql.getConnection();
                  PreparedStatement ps = c.prepareStatement(
-                     "SELECT registered FROM auth_players WHERE username=? AND password=?")) {
+                         "SELECT registered FROM auth_players WHERE username=? AND password=?")) {
                 ps.setString(1, player.getUsername());
                 ps.setString(2, hashed);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -185,9 +215,7 @@ public class AuthManager {
                     }
                 }
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd logowania: " + e.getMessage());
             }
         }
         return false;
@@ -199,18 +227,15 @@ public class AuthManager {
 
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
         if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
             try (Connection c = mysql.getConnection();
                  PreparedStatement ps = c.prepareStatement(
-                     "UPDATE auth_players SET rememberIP=? WHERE username=?")) {
+                         "UPDATE auth_players SET rememberIP=? WHERE username=?")) {
                 ps.setString(1, session.ip);
                 ps.setString(2, player.getUsername());
                 ps.executeUpdate();
                 return true;
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd rememberIP: " + e.getMessage());
             }
         }
         return false;
@@ -222,22 +247,19 @@ public class AuthManager {
 
         String oldHashed = hashPassword(oldPassword);
         String newHashed = hashPassword(newPassword);
-        
+
         MySQLService mysql = SectorProxyPlugin.getInstance().getMysql();
         if (mysql != null && mysql.isEnabled()) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().info("MySQL jest dostępne");
             try (Connection c = mysql.getConnection();
                  PreparedStatement ps = c.prepareStatement(
-                     "UPDATE auth_players SET password=? WHERE username=? AND password=?")) {
+                         "UPDATE auth_players SET password=? WHERE username=? AND password=?")) {
                 ps.setString(1, newHashed);
                 ps.setString(2, player.getUsername());
                 ps.setString(3, oldHashed);
                 int affected = ps.executeUpdate();
                 return affected > 0;
             } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
-                
+                SectorProxyPlugin.getInstance().getLogger().severe("Błąd zmiany hasła: " + e.getMessage());
             }
         }
         return false;
@@ -251,8 +273,7 @@ public class AuthManager {
             for (byte b : hash) hex.append(String.format("%02x", b));
             return hex.toString();
         } catch (Exception e) {
-                pl.dzoku.sectorsystem.SectorProxyPlugin.getInstance().getLogger().severe("Błąd rejestracji: " + e.getMessage());
-                e.printStackTrace();
+            SectorProxyPlugin.getInstance().getLogger().severe("Błąd hashowania: " + e.getMessage());
             return password;
         }
     }

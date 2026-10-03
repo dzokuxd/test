@@ -15,6 +15,7 @@ import pl.dzoku.sectorsystem.listener.AuthListener;
 import pl.dzoku.sectorsystem.config.AuthManager;
 import pl.dzoku.sectorsystem.auth.LoginTask;
 import pl.dzoku.sectorsystem.config.ProxyConfigManager;
+import pl.dzoku.sectorsystem.listener.LimboQueueListener;
 import pl.dzoku.sectorsystem.listener.VersionGuardListener;
 import pl.dzoku.sectorsystem.service.HeartbeatService;
 import pl.dzoku.sectorsystem.service.NatsService;
@@ -88,7 +89,7 @@ public class SectorProxyPlugin {
         this.orchestrator = new RestartOrchestrator(server, redisService, healthChecker, logger);
         this.orchestrator.start();
 
-        this.limboScoreboard = new LimboScoreboard(server, redisService);
+        this.limboScoreboard = new LimboScoreboard(server, redisService, orchestrator);
         this.limboScoreboard.start();
         
         this.queueManager = new QueueManager(this);
@@ -97,6 +98,7 @@ public class SectorProxyPlugin {
         natsService.subscribe("sector.restart", message -> orchestrator.handleRestartMessage(message));
 
         server.getEventManager().register(this, new VersionGuardListener());
+        getServer().getEventManager().register(this, new LimboQueueListener(this));
         server.getEventManager().register(this, orchestrator);
         server.getEventManager().register(this, new AuthListener(this));
         server.getEventManager().register(this, new pl.dzoku.sectorsystem.listener.ServerListListener(this));

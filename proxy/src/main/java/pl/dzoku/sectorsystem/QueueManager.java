@@ -39,15 +39,15 @@ public class QueueManager {
         // Sprawdź czy sektor istnieje w Velocity
         Optional<RegisteredServer> serverOpt = plugin.getServer().getServer(targetSector);
         if (serverOpt.isEmpty()) {
-            player.sendMessage(Component.text("§cBłąd: Sektor §e'" + targetSector + "' §cnie istnieje! Przekierowuję do limbo.", NamedTextColor.RED));
-            redirectToLimbo(player);
+            player.sendMessage(Component.text("§cBłąd: Sektor §e'" + targetSector + "' §cnie istnieje!", NamedTextColor.RED));
+            redirectToLimbo(player, targetSector);
             return;
         }
 
         // Sprawdź czy sektor jest online
         if (!plugin.getHealthChecker().isSectorOnline(targetSector)) {
-            player.sendMessage(Component.text("§cSektor §e'" + targetSector + "' §cjest offline! Przekierowuję do limbo.", NamedTextColor.RED));
-            redirectToLimbo(player);
+            player.sendMessage(Component.text("§cSektor §e'" + targetSector + "' §cjest offline!", NamedTextColor.RED));
+            redirectToLimbo(player, targetSector);
             return;
         }
 
@@ -69,11 +69,13 @@ public class QueueManager {
         }
     }
 
-    private void redirectToLimbo(Player player) {
+    private void redirectToLimbo(Player player, String targetSector) {
+        // ← NOWE: dodaj gracza do kolejki ORCHESTRATORA, żeby tick() go wyciągnął gdy sektor wróci
+        if (plugin.getOrchestrator() != null) {
+            plugin.getOrchestrator().enqueuePlayer(player, targetSector);
+        }
         Optional<RegisteredServer> limbo = plugin.getServer().getServer(RestartOrchestrator.LIMBO);
-        limbo.ifPresent(server -> {
-            player.createConnectionRequest(server).connect();
-        });
+        limbo.ifPresent(server -> player.createConnectionRequest(server).connect());
     }
 
     private int getSectorMaxSlots(String sector) {

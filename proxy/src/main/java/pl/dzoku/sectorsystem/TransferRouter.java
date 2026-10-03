@@ -54,8 +54,8 @@ public class TransferRouter {
 
         if (!targetSector.equals(RestartOrchestrator.LIMBO) && !healthChecker.isSectorOnline(targetSector)) {
             logger.warning("Target sector " + targetSector + " is offline for player " + playerName);
-            player.sendMessage(Component.text("§cSektor §e'" + targetSector + "' §cjest offline! Przekierowuję do limbo.", NamedTextColor.RED));
-            redirectToServer(player, RestartOrchestrator.LIMBO);
+            player.sendMessage(Component.text("§cSektor §e'" + targetSector + "' §cjest offline!", NamedTextColor.RED));
+            redirectToServer(player,targetSector);
             return;
         }
 
