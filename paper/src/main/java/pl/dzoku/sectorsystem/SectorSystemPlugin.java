@@ -20,10 +20,12 @@ import pl.gildie.GildieModule;
 import pl.gildie.commands.GCommand;
 import pl.gildie.commands.TntCommand;
 import pl.gildie.listeners.*;
+import pl.gildie.managers.CowStackManager;
 import pl.gildie.managers.TerritoryBarManager;
 import pl.gildie.sector.SectorBridgeListener;
+import pl.gildie.service.SugarcaneTask;
 import pl.gildie.service.UserResyncTask;
-import pl.gildie.service.UserSyncListener;
+import pl.gildie.listeners.UserSyncListener;
 import pl.sectorsystem.common.mysql.MySQLService;
 import pl.sectorsystem.common.nats.NatsService;
 import pl.sectorsystem.common.redis.RedisService;
@@ -40,14 +42,16 @@ public final class SectorSystemPlugin extends JavaPlugin {
     private MySQLService mysqlService;
     private GildieModule gildieModule;
     private pl.sectorsystem.common.config.SystemConfig systemConfig;
-    private pl.dzoku.sectorsystem.scoreboard.SectorScoreboard scoreboard;
+    //private pl.dzoku.sectorsystem.scoreboard.SectorScoreboard scoreboard;
     private pl.dzoku.sectorsystem.tablist.SectorTablist tablist;
     private static SectorSystemPlugin instance;
     private BukkitTask metricsReportTask;
     private BukkitTask heartbeatTask;
+    private CowStackManager stackManager;
 
     @Override
     public void onEnable() {
+        stackManager = new CowStackManager(this);
         instance = this;
         this.configManager = new ConfigManager(this);
 
@@ -146,8 +150,7 @@ public final class SectorSystemPlugin extends JavaPlugin {
         gildieModule.enable();
 
         TerritoryBarManager bar = gildieModule.getTerritoryBarManager();
-        GCommand gCommand = new GCommand(gildieModule, gildieModule.getGuildManager(),
-                gildieModule.getRegenManager(), bar);
+        GCommand gCommand = new GCommand(gildieModule, gildieModule.getGuildManager(), gildieModule.getRegenManager(), bar, gildieModule.getRatingManager(), gildieModule.getModularScoreboardManager());
         getCommand("g").setExecutor(gCommand);
         getCommand("g").setTabCompleter(gCommand);
         getCommand("tnt").setExecutor(new TntCommand());
@@ -159,23 +162,24 @@ public final class SectorSystemPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new TerritoryListener(bar, gildieModule.getRegenManager()), this);
         getServer().getPluginManager().registerEvents(new InventoryListener(gildieModule.getDigManager()), this);
         getServer().getPluginManager().registerEvents(new InviteWandListener(gildieModule, gCommand), this);
-        getServer().getPluginManager().registerEvents(new JoinListener(this, gildieModule.getGuildManager()), this);
         getServer().getPluginManager().registerEvents(new PeriscopeListener(gildieModule.getPeriscopeManager()), this);
         getServer().getPluginManager().registerEvents(new WarListener(gildieModule.getGuildManager(), gildieModule.getWarManager()), this);
         getServer().getPluginManager().registerEvents(new UserSyncListener(gildieModule), this);
         getServer().getPluginManager().registerEvents(new SectorBridgeListener(gildieModule, gildieModule.getGuildManager()), this);
+        getServer().getPluginManager().registerEvents(new CowStackListener(this, stackManager), this);
         new UserResyncTask(gildieModule).start();
+        new SugarcaneTask().runTaskTimer(this, 600L, 600L);
+        stackManager.startCleanupTask();
 
         // ── MODUŁY UI ────────────────────────────────────────────────────
         new pl.dzoku.sectorsystem.chat.GlobalChatHandler(this);
         new pl.dzoku.sectorsystem.manager.FailsafeManager(this);
 
         if (getConfig().getBoolean("world-sync.enabled", true)) {
-            // WorldSyncManager - zarządza logiką sync (NIE jest Listenerem!)
             new WorldSyncManager(this);
         }
 
-        this.scoreboard = new pl.dzoku.sectorsystem.scoreboard.SectorScoreboard(this);
+        //this.scoreboard = new pl.dzoku.sectorsystem.scoreboard.SectorScoreboard(this);
         this.tablist = new pl.dzoku.sectorsystem.tablist.SectorTablist(this);
         getServer().getPluginManager().registerEvents(new pl.dzoku.sectorsystem.chat.GlobalChatListener(this), this);
 
@@ -184,6 +188,15 @@ public final class SectorSystemPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // ── pkt 3: CLEAR END CRYSTALS PRZED wyłączeniem modułu gildii ───
+        if (gildieModule != null && gildieModule.getMonumentManager() != null) {
+            gildieModule.getMonumentManager().shutdown();
+        }
+        if (stackManager != null) {
+            stackManager.removeAllStacks();
+        }
+        // ──────────────────────────────────────────────────────────────────
+
         if (gildieModule != null) gildieModule.disable();
         if (mysqlService != null) mysqlService.close();
         if (metricsReportTask != null) metricsReportTask.cancel();
@@ -211,8 +224,9 @@ public final class SectorSystemPlugin extends JavaPlugin {
     public RestartManager getRestartManager() { return restartManager; }
     public GildieModule getGildieModule() { return gildieModule; }
     public MySQLService getMysqlService() { return mysqlService; }
-    public pl.dzoku.sectorsystem.scoreboard.SectorScoreboard getScoreboard() { return scoreboard; }
+    //public pl.dzoku.sectorsystem.scoreboard.SectorScoreboard getScoreboard() { return scoreboard; }
     public pl.dzoku.sectorsystem.tablist.SectorTablist getTablist() { return tablist; }
     public String getCurrentSectorId() { return configManager.getCurrentSector(); }
     public static SectorSystemPlugin getInstance() { return instance; }
+    public CowStackManager getStackManager() {return stackManager;}
 }

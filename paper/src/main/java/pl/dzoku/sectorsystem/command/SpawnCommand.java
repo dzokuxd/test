@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class SpawnCommand implements CommandExecutor, Listener {
     private static final int DELAY_SECONDS = 30;
+    private static final String TARGET_SECTOR = "spawn";
 
     private final SectorSystemPlugin plugin;
     private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
@@ -49,6 +50,17 @@ public class SpawnCommand implements CommandExecutor, Listener {
             return true;
         }
 
+        // ── NOWE: jasne komunikaty zamiast cichego nic ──
+        String current = plugin.getConfigManager().getCurrentSector();
+        if (TARGET_SECTOR.equalsIgnoreCase(current)) {
+            player.sendMessage(Component.text("Już jesteś na sektorze spawn!", NamedTextColor.YELLOW));
+            return true;
+        }
+        if (!plugin.getRedisService().isSectorOnline(TARGET_SECTOR)) {
+            player.sendMessage(Component.text("§cSektor §e" + TARGET_SECTOR + " §cjest obecnie OFFLINE — teleport niemożliwy.", NamedTextColor.RED));
+            return true;
+        }
+
         Location start = player.getLocation().clone();
         BukkitTask task = Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
             private int left = DELAY_SECONDS;
@@ -59,7 +71,15 @@ public class SpawnCommand implements CommandExecutor, Listener {
                 left--;
                 if (left <= 0) {
                     cancel(uuid);
-                    plugin.getTransferStateMachine().initiateTransfer(player, "spawn");
+                    plugin.getTransferStateMachine().initiateTransfer(player, TARGET_SECTOR);
+
+                    // ── NOWE: bezpiecznik — jesli po 8s nadal jestes tu, transfer nie wyszedl ──
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                        if (player.isOnline()) {
+                            player.sendMessage(Component.text("§cTransfer na §e" + TARGET_SECTOR
+                                    + " §cnie doszedł do skutku (sektor offline / brak odpowiedzi proxy).", NamedTextColor.RED));
+                        }
+                    }, 20L * 8);
                 } else {
                     player.sendActionBar(Component.text("Teleport na spawn za " + left + "s - NIE ruszaj sie!", NamedTextColor.GREEN));
                 }

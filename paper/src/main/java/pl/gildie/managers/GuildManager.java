@@ -7,7 +7,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import pl.gildie.Const;
 import pl.gildie.GildieModule;
 import pl.gildie.model.Guild;
-import pl.gildie.util.WaypointHook;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -51,11 +50,28 @@ public class GuildManager {
                         module.publishGuildUpdate(tag);
                     } catch (Exception e) {
                         plugin.getLogger().severe("Zapis gildii " + tag + " nie udal sie: " + e.getMessage());
+                        if (e.getCause() != null) plugin.getLogger().severe("Przyczyna SQL: " + e.getCause().getMessage());
                         dirty.add(tag);
                     }
                 }
             }
         });
+    }
+    public void saveSync() {
+        if (dirty.isEmpty()) return;
+        Set<String> toSave = new HashSet<>(dirty);
+        dirty.clear();
+        for (String tag : toSave) {
+            Guild g = guilds.get(tag);
+            if (g == null) continue;
+            try {
+                module.getGuildRepository().upsert(g);
+            } catch (Exception e) {
+                plugin.getLogger().severe("Zapis gildii " + tag + " nie udal sie: " + e.getMessage());
+                if (e.getCause() != null) plugin.getLogger().severe("Przyczyna SQL: " + e.getCause().getMessage());
+                dirty.add(tag);
+            }
+        }
     }
 
     public void saveIfDirty() { save(); }
@@ -89,14 +105,6 @@ public class GuildManager {
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> module.getEggHologram().spawnOrUpdate(guild), 20L);
         markDirty(tag); save();
-
-        Location wpLoc = guild.getCenterAtY(70);
-        Player leader = Bukkit.getPlayer(owner);
-        if (wpLoc != null && leader != null && leader.isOnline()) {
-            WaypointHook.addGuildWaypoint(leader, "Gildia " + tag, wpLoc, 0x55FF55).ifPresent(guild::setGuildWaypointId);
-        } else if (wpLoc != null) {
-            WaypointHook.addGuildWaypoint(tag, "Gildia " + tag, wpLoc, 0x55FF55).ifPresent(guild::setGuildWaypointId);
-        }
         markDirty(tag); save();
         return true;
     }
@@ -107,8 +115,6 @@ public class GuildManager {
             if (ally != null) { ally.removeAlly(guild.getTag()); markDirty(ally.getTag()); }
         }
         guild.getAllies().clear();
-        if (guild.getGuildWaypointId() != null) WaypointHook.removeGuildWaypoint(guild.getGuildWaypointId());
-        if (guild.getRaidWaypointId() != null) WaypointHook.removeGuildWaypoint(guild.getRaidWaypointId());
         module.getEggHologram().remove(guild.getTag());
         guilds.remove(guild.getTag());
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> module.getGuildRepository().delete(guild.getTag()));
@@ -177,7 +183,6 @@ public class GuildManager {
         boolean changed = false;
         for (Guild g : guilds.values()) {
             if (g.getRaidExpiresAt() > 0 && g.getRaidExpiresAt() <= now) {
-                if (g.getRaidWaypointId() != null) WaypointHook.removeGuildWaypoint(g.getRaidWaypointId());
                 g.clearRaidBase();
                 markDirty(g.getTag());
                 changed = true;

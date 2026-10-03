@@ -34,13 +34,19 @@ public final class EggHologram {
         remove(guild.getTag());
         removeNearby(egg);
 
-        Location base = egg.clone().add(0, 1.6, 0);
+        // ── NAPRAWA: centrujemy hologram na ŚRODKU bloku jajka (floor + 0.5),
+        //    niezależnie czy w bazie siedzą coordy całkowite czy z .5 ──
+        Location base = new Location(egg.getWorld(),
+                Math.floor(egg.getX()) + 0.5,
+                Math.floor(egg.getY()) + 1.2,
+                Math.floor(egg.getZ()) + 0.5);
+
         List<UUID> ids = new ArrayList<>();
         int max = guild.getMaxEggHp();
         int hp = guild.getEggHp();
         String color = hpColor(hp, max);
 
-        ArmorStand line1 = spawnLine(base.clone().add(0, 0.3, 0), "\u00a7c\u00a7l" + guild.getTag());
+        ArmorStand line1 = spawnLine(base.clone().add(0, 0.35, 0), "\u00a7c\u00a7l" + guild.getTag());
         if (line1 != null) { line1.setMetadata(META_TAG, new FixedMetadataValue(plugin, guild.getTag())); ids.add(line1.getUniqueId()); }
         ArmorStand line2 = spawnLine(base, color + "HP: \u00a7f" + hp + "\u00a77/\u00a7f" + max);
         if (line2 != null) { line2.setMetadata(META_TAG, new FixedMetadataValue(plugin, guild.getTag())); ids.add(line2.getUniqueId()); }

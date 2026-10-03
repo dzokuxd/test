@@ -16,7 +16,6 @@ public class MonumentBannerItem {
     public static NamespacedKey GUILD_KEY;
     public static NamespacedKey CORNER_KEY;
     public static NamespacedKey CAPTURE_TIME_KEY;
-    public static NamespacedKey WAYPOINT_KEY;
     public static NamespacedKey DROP_ID_KEY;
 
     public static void init(JavaPlugin plugin) {
@@ -25,7 +24,6 @@ public class MonumentBannerItem {
         GUILD_KEY = new NamespacedKey(plugin, "monument_guild");
         CORNER_KEY = new NamespacedKey(plugin, "monument_corner");
         CAPTURE_TIME_KEY = new NamespacedKey(plugin, "monument_capture_time");
-        WAYPOINT_KEY = new NamespacedKey(plugin, "monument_waypoint");
         DROP_ID_KEY = new NamespacedKey(plugin, "monument_drop_id");
     }
 

@@ -19,7 +19,9 @@ public class GuildRepository {
     private static final Gson gson = new Gson();
     private final Database db;
 
-    public GuildRepository(Database db) { this.db = db; }
+    public GuildRepository(Database db) {
+        this.db = db;
+    }
 
     public List<Guild> loadAll() {
         List<Guild> out = new ArrayList<>();
@@ -53,12 +55,8 @@ public class GuildRepository {
         String raid = rs.getString("raid_base");
         if (raid != null) {
             JsonObject r = gson.fromJson(raid, JsonObject.class);
-            String rw = rs.getString("raid_waypoint");
-            g.loadRaidBase(JsonLoc.world(r), JsonLoc.x(r), JsonLoc.y(r), JsonLoc.z(r), rs.getLong("raid_base_exp"),
-                    rw != null ? UUID.fromString(rw) : null);
+            g.loadRaidBase(JsonLoc.world(r), JsonLoc.x(r), JsonLoc.y(r), JsonLoc.z(r), rs.getLong("raid_base_exp"), null);
         }
-        String gwp = rs.getString("guild_waypoint");
-        if (gwp != null) g.setGuildWaypointId(UUID.fromString(gwp));
 
         String egg = rs.getString("egg");
         if (egg != null) {
@@ -67,20 +65,30 @@ public class GuildRepository {
                     e.get("hp").getAsInt(), e.get("maxHp").getAsInt());
         }
         g.setRankPoints(rs.getInt("rank_points"));
+
+        // ── NOWE POLA RATING SYSTEM ──────────────────────────────────────
+        g.setAdminRatingSum(rs.getInt("admin_rating_sum"));
+        g.setRatedGuildTag(rs.getString("rated_guild_tag"));
+        g.deserializePlayerVotes(rs.getString("player_votes"));
+        g.deserializeReceivedRatings(rs.getString("received_player_ratings"));
+
         return g;
     }
 
     public void upsert(Guild g) {
+        // POPRAWKA: Dodano jeden ? więcej (teraz jest 19 placeholderów dla 19 pól)
         String sql = "INSERT INTO guilds (tag, owner_uuid, deputies, members, allies, center, radius,"
-                + " home, raid_base, raid_base_exp, raid_waypoint, guild_waypoint, egg, rank_points,"
-                + " created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                + " home, raid_base, raid_base_exp, egg, rank_points, admin_rating_sum, rated_guild_tag, player_votes,"
+                + " received_player_rating_sum, received_player_rating_count, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 + " ON DUPLICATE KEY UPDATE"
                 + " owner_uuid=VALUES(owner_uuid), deputies=VALUES(deputies), members=VALUES(members),"
                 + " allies=VALUES(allies), center=VALUES(center), radius=VALUES(radius),"
                 + " home=VALUES(home), raid_base=VALUES(raid_base), raid_base_exp=VALUES(raid_base_exp),"
-                + " raid_waypoint=VALUES(raid_waypoint), guild_waypoint=VALUES(guild_waypoint), egg=VALUES(egg),"
-                + " rank_points=VALUES(rank_points), updated_at=VALUES(updated_at)";
+                + " egg=VALUES(egg), rank_points=VALUES(rank_points), admin_rating_sum=VALUES(admin_rating_sum),"
+                + " rated_guild_tag=VALUES(rated_guild_tag), player_votes=VALUES(player_votes),"
+                + " received_player_rating_sum=VALUES(received_player_rating_sum),"
+                + " received_player_rating_count=VALUES(received_player_rating_count), updated_at=VALUES(updated_at)";
 
         JsonObject center = JsonLoc.of(g.getWorldName(), g.getX(), g.getY(), g.getZ());
         JsonArray members = new JsonArray(); g.getMembers().forEach(u -> members.add(u.toString()));
@@ -108,12 +116,15 @@ public class GuildRepository {
             ps.setString(8, home != null ? gson.toJson(home) : null);
             ps.setString(9, raid != null ? gson.toJson(raid) : null);
             ps.setLong(10, Math.max(0, g.getRaidExpiresAt()));
-            ps.setString(11, g.getRaidWaypointId() != null ? g.getRaidWaypointId().toString() : null);
-            ps.setString(12, g.getGuildWaypointId() != null ? g.getGuildWaypointId().toString() : null);
-            ps.setString(13, egg != null ? gson.toJson(egg) : null);
-            ps.setInt(14, g.getRankPoints());
-            ps.setLong(15, now);
-            ps.setLong(16, now);
+            ps.setString(11, egg != null ? gson.toJson(egg) : null);
+            ps.setInt(12, g.getRankPoints());
+            ps.setInt(13, g.getAdminRatingSum());
+            ps.setString(14, g.getRatedGuildTag());
+            ps.setString(15, g.serializePlayerVotes());
+            ps.setInt(16, g.getReceivedPlayerRatingSum());
+            ps.setInt(17, g.getReceivedPlayerRatingCount());
+            ps.setLong(18, now);
+            ps.setLong(19, now);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("guilds upsert failed: " + g.getTag(), e);

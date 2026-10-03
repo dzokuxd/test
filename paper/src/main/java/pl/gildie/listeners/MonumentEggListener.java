@@ -1,10 +1,12 @@
 package pl.gildie.listeners;
 
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 import pl.gildie.Const;
 import pl.gildie.managers.GuildManager;
@@ -23,29 +25,55 @@ public class MonumentEggListener implements Listener {
         this.guildManager = gm;
     }
 
-    @EventHandler(priority = EventPriority.HIGH)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEggInteract(PlayerInteractEvent e) {
+        Player p = e.getPlayer();
+        Guild g = guildManager.getGuildByPlayer(p.getUniqueId());
+        if (g != null && !g.hasEgg()) {
+            p.sendMessage("§c[DEBUG] Gildia nie ma ustawionej pozycji jajka!");
+            p.sendMessage("§7Pozycja jajka w bazie: " + g.getEggX() + ", " + g.getEggY() + ", " + g.getEggZ());
+        }
+        // Tylko kliknięcia na bloki
+        if (e.getAction() != Action.LEFT_CLICK_BLOCK && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (e.getClickedBlock() == null) return;
+
+        // Tylko dragon egg
         if (!e.getClickedBlock().getType().name().equalsIgnoreCase(Const.EGG_MATERIAL)) return;
 
-        Player p = e.getPlayer();
-        Location loc = e.getClickedBlock().getLocation();
-        Guild g = guildManager.getGuildByPlayer(p.getUniqueId());
-        if (g == null) return;
-        if (!g.isEggBlock(loc)) return;
-        if (!MonumentBannerItem.isBanner(p.getInventory().getHelmet())) return;
+        Location eggLoc = e.getClickedBlock().getLocation();
 
+        // ── NAJWAŻNIEJSZE: ANULUJ EVENT NATYCHMIAST (żeby jajko nie uciekło) ──
         e.setCancelled(true);
 
-        String type = MonumentBannerItem.getType(p.getInventory().getHelmet());
-        String owner = MonumentBannerItem.getOwnerGuild(p.getInventory().getHelmet());
-        if (!g.getTag().equalsIgnoreCase(owner)) {
-            p.sendMessage(MonumentMsg.error("Ten sztandar nalezy do gildii " + owner + ", nie do Twojej!"));
+        // Sprawdź czy gracz ma sztandar na głowie
+        if (!MonumentBannerItem.isBanner(p.getInventory().getHelmet())) {
+            return; // kliknął jajko bez sztandaru - nic się nie dzieje, jajko nie ucieka
+        }
+
+        // Znajdź gildię gracza
+        if (g == null) {
+            p.sendMessage(MonumentMsg.error("Musisz byc w gildii, aby dostarczyc sztandar!"));
             return;
         }
 
+        // Sprawdź czy to jajko TEJ gildii (porównaj z zapisaną pozycją)
+        Location savedEgg = g.getEggLocation();
+        if (savedEgg == null) {
+            p.sendMessage(MonumentMsg.error("Twoja gildia nie ma jajka!"));
+            return;
+        }
+
+        if (!locationsMatch(eggLoc, savedEgg)) {
+            p.sendMessage(MonumentMsg.error("To nie jest jajko Twojej gildii!"));
+            return;
+        }
+
+        // Sprawdź właściciela sztandaru
+        String type = MonumentBannerItem.getType(p.getInventory().getHelmet());
+
+        // ── LOGIKA DOSTARCZENIA ──
         if ("CENTER".equals(type)) {
-            GuildBonusManager.addCenterBonus(g.getTag(), null);
+            GuildBonusManager.addCenterBonus(g.getTag());
             monumentManager.centerDelivered();
             p.sendMessage(MonumentMsg.title("Dostarczyles KORONE!").append(MonumentMsg.desc(" Twoja gildia ma bonus dropu na 60 min!")));
         } else {
@@ -56,6 +84,16 @@ public class MonumentEggListener implements Listener {
             p.sendMessage(MonumentMsg.title("Dostarczyles sztandar narozny!").append(MonumentMsg.desc(" Efekt " + fx + " na 30 min!")));
         }
 
+        // Usuń sztandar z głowy
         p.getInventory().setHelmet(null);
+    }
+
+    // Pomocnicze: porównanie lokalizacji (block coords, nie exact doubles)
+    private boolean locationsMatch(Location a, Location b) {
+        if (a == null || b == null) return false;
+        if (a.getWorld() != b.getWorld()) return false;
+        return a.getBlockX() == b.getBlockX()
+                && a.getBlockY() == b.getBlockY()
+                && a.getBlockZ() == b.getBlockZ();
     }
 }

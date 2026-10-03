@@ -10,32 +10,37 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import pl.gildie.Const;
 import pl.gildie.GildieModule;
+import pl.gildie.gui.RatingGui;
 import pl.gildie.managers.GuildManager;
 import pl.gildie.managers.MenuManager;
-import pl.gildie.managers.PingScoreboard;
+import pl.gildie.managers.RatingManager;
 import pl.gildie.managers.RegenManager;
 import pl.gildie.managers.TerritoryBarManager;
 import pl.gildie.model.Guild;
+import pl.gildie.scoreboard.ModularScoreboardManager;
+import pl.gildie.scoreboard.modules.PingScoreboardModule;
 import pl.gildie.util.ItemCost;
 import pl.gildie.util.TeleportUtil;
-import pl.gildie.util.WaypointHook;
 import pl.gildie.war.War;
 import pl.gildie.util.GuildEgg;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-public class GCommand implements CommandExecutor, TabCompleter {
+public class GCommand implements CommandExecutor, TabCompleter, Listener {
     private static final int DEFAULT_RADIUS = 50;
     private static final int TELEPORT_SECONDS = 15;
     private static final long INVITE_EXPIRE_MS = 60_000L;
@@ -56,12 +61,16 @@ public class GCommand implements CommandExecutor, TabCompleter {
     private final GuildManager guildManager;
     private final RegenManager regenManager;
     private final TerritoryBarManager territoryBarManager;
+    private final RatingManager ratingManager;
+    private final ModularScoreboardManager scoreboardManager;
 
-    public GCommand(GildieModule module, GuildManager guildManager, RegenManager regenManager, TerritoryBarManager bar) {
+    public GCommand(GildieModule module, GuildManager guildManager, RegenManager regenManager, TerritoryBarManager bar, RatingManager ratingManager, ModularScoreboardManager scoreboardManager) {
         this.module = module;
         this.guildManager = guildManager;
         this.regenManager = regenManager;
         this.territoryBarManager = bar;
+        this.ratingManager = ratingManager;
+        this.scoreboardManager = scoreboardManager;
     }
 
     @Override
@@ -90,6 +99,8 @@ public class GCommand implements CommandExecutor, TabCompleter {
             case "sojusz", "ally" -> handleAlliance(player, args);
             case "wojna", "war" -> pl.gildie.war.WarGui.openMain(player, guildManager, module.getWarManager());
             case "pp" -> handlePp(player);
+            case "ocena", "rate" -> handleRate(player, args);
+            case "oceny", "ranking" -> handleRatings(player);
             case "pomoc", "help" -> sendHelp(player);
             default -> player.sendMessage("§cNieznana komenda. Uzyj §e/g pomoc");
         }
@@ -109,57 +120,64 @@ public class GCommand implements CommandExecutor, TabCompleter {
         p.sendMessage("§e/g regeneruj §7- regen <=Y60");
         p.sendMessage("§e/g panel §7- fosa/sciany");
         p.sendMessage("§e/g peryskop | sojusz | wojna | pp");
+        p.sendMessage("§e/g ocena <tag> <1-5> §7- oceń inną gildię");
+        p.sendMessage("§e/g oceny §7- ranking ocenianych gildii");
         p.sendMessage("§8§m--------------------------------");
     }
 
     private void handlePp(Player player) {
         Guild g = guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null) { player.sendMessage("§cNie jestes w gildii!"); return; }
-        PingScoreboard.ping(player, g);
+
         Location loc = player.getLocation();
-        WaypointHook.addGuildWaypoint(player, "POMOC " + player.getName(), loc, 0xFFAA00)
-                .ifPresent(wp -> Bukkit.getScheduler().runTaskLater(module.plugin(),
-                        () -> WaypointHook.removeGuildWaypoint(wp), 20L * 60));
+        Set<UUID> viewers = new HashSet<>();
         for (UUID id : g.getMembers()) {
             Player p = Bukkit.getPlayer(id);
-            if (p != null && p.isOnline()) {
-                p.sendMessage("§6§l[PING] §e" + player.getName() + " §7potrzebuje pomocy! §f"
-                        + loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ());
-            }
+            if (p != null && p.isOnline()) viewers.add(id);
         }
+
+        long expiresAt = System.currentTimeMillis() + Const.PING_SCOREBOARD_SECONDS * 1000L;
+        PingScoreboardModule.startPing(player.getName(), g.getTag(), loc.getWorld().getName(), loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ(), expiresAt, viewers);
+        for (UUID id : g.getMembers()) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null && p.isOnline()) p.sendMessage("§6§l[PING] §e" + player.getName() + " §7potrzebuje pomocy! §f" + loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ());
+        }
+        scoreboardManager.forceUpdate();
     }
 
+    private void handleRate(Player player, String[] args) {
+        if (args.length < 3) { player.sendMessage("§cUzycie: /g ocena <tag> <ocena 1-5>"); return; }
+        int rating;
+        try { rating = Integer.parseInt(args[2]); } catch (NumberFormatException e) { player.sendMessage("§cOcena musi byc liczba!"); return; }
+        RatingManager.PlayerRatingResult result = ratingManager.playerRate(player, args[1], rating);
+        player.sendMessage(result.getMessage());
+        if (result == RatingManager.PlayerRatingResult.SUCCESS) scoreboardManager.forceUpdate();
+    }
+
+    private void handleRatings(Player player) { RatingGui.open(player, module); }
+
     private void handleCreate(Player player, String[] args) {
-        if (args.length < 2) { player.sendMessage("§cUzycie: /g zaloz <tag>"); return; }
-        String tag = args[1];
+        if (args.length < 2) {
+            player.sendMessage("§cUzycie: /g zaloz <tag>"); return; }
+            String tag = args[1];
         if (!tag.matches("[A-Za-z0-9]{2,5}")) { player.sendMessage("§cTag 2-5 znakow."); return; }
         if (guildManager.getGuildByPlayer(player.getUniqueId()) != null) { player.sendMessage("§cJestes juz w gildii!"); return; }
         if (guildManager.getGuild(tag) != null) { player.sendMessage("§cTaka gildia istnieje!"); return; }
         if (guildManager.getGuildAt(player.getLocation()) != null) { player.sendMessage("§cStoisz na terenie innej gildii!"); return; }
-        
-        // 1. Teleportuj gracza na Y=40
-        Location tpLoc = player.getLocation();
-        tpLoc.setY(40);
-        player.teleport(tpLoc);
-        
-        // 2. Utwórz gildię
+        Location tpLoc = player.getLocation(); tpLoc.setY(40); player.teleport(tpLoc);
         boolean ok = guildManager.createGuild(tag, player.getUniqueId(), tpLoc, DEFAULT_RADIUS);
         if (ok) {
             player.sendMessage("§aZalozono gildie §e" + tag.toUpperCase() + " §a(r=" + DEFAULT_RADIUS + ").");
             territoryBarManager.update(player);
-            
-            // 3. Generuj monument (względem pozycji gracza na Y=40)
             GuildEgg.generate(player.getLocation());
-        }
-        else player.sendMessage("§cNie udalo sie zalozyc gildii.");
+        } else player.sendMessage("§cNie udalo sie zalozyc gildii.");
     }
 
     private void handleLeave(Player player) {
         Guild g = guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null) { player.sendMessage("§cNie jestes w gildii!"); return; }
         if (g.isOwner(player.getUniqueId())) { player.sendMessage("§cLider: uzyj /g rozwiaz lub /g lider."); return; }
-        g.removeMember(player.getUniqueId());
-        guildManager.markDirty(g.getTag()); guildManager.save();
+        g.removeMember(player.getUniqueId()); guildManager.markDirty(g.getTag()); guildManager.save();
         player.sendMessage("§aOpusciles §e" + g.getTag());
     }
 
@@ -167,12 +185,8 @@ public class GCommand implements CommandExecutor, TabCompleter {
         Guild g = guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null) { player.sendMessage("§cNie jestes w gildii!"); return; }
         if (!g.isOwner(player.getUniqueId())) { player.sendMessage("§cTylko lider!"); return; }
-        if (module.getWarManager().getActiveWarCount(g.getTag()) > 0) {
-            player.sendMessage("§cNie mozesz rozwiazac gildii podczas wojny!");
-            return;
-        }
-        guildManager.disband(g);
-        player.sendMessage("§aRozwiazano gildie §e" + g.getTag());
+        if (module.getWarManager().getActiveWarCount(g.getTag()) > 0) { player.sendMessage("§cNie mozesz rozwiazac gildii podczas wojny!"); return; }
+        guildManager.disband(g); player.sendMessage("§aRozwiazano gildie §e" + g.getTag());
     }
 
     private void handleKick(Player player, String[] args) {
@@ -184,10 +198,8 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (t == null) { player.sendMessage("§cGracz online?"); return; }
         if (!g.isMember(t.getUniqueId()) || g.isOwner(t.getUniqueId())) { player.sendMessage("§cNie mozna."); return; }
         if (g.isDeputy(t.getUniqueId()) && !g.isOwner(player.getUniqueId())) { player.sendMessage("§cTylko lider zrzuca zastepce."); return; }
-        g.removeMember(t.getUniqueId());
-        guildManager.markDirty(g.getTag()); guildManager.save();
-        t.sendMessage("§cWyrzucono Cie z §e" + g.getTag());
-        player.sendMessage("§aWyrzucono §e" + t.getName());
+        g.removeMember(t.getUniqueId()); guildManager.markDirty(g.getTag()); guildManager.save();
+        t.sendMessage("§cWyrzucono Cie z §e" + g.getTag()); player.sendMessage("§aWyrzucono §e" + t.getName());
     }
 
     private void handleInvite(Player player, String[] args) {
@@ -197,18 +209,11 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (args.length < 2) { player.sendMessage("§cUzycie: /g zapros <nick|wand>"); return; }
         if (args[1].equalsIgnoreCase("wand") || args[1].equalsIgnoreCase("rozdzka")) {
             ItemStack wand = new ItemStack(Material.STICK);
-            ItemMeta meta = wand.getItemMeta();
-            meta.setDisplayName(WAND_NAME);
-            List<String> lore = new ArrayList<>();
-            lore.add("§7PPM na gracza = zaproszenie.");
-            lore.add("§7Gildia: §e" + g.getTag());
-            lore.add("§8Wazna 5 min.");
-            meta.setLore(lore);
-            wand.setItemMeta(meta);
-            player.getInventory().addItem(wand);
+            ItemMeta meta = wand.getItemMeta(); meta.setDisplayName(WAND_NAME);
+            List<String> lore = new ArrayList<>(); lore.add("§7PPM na gracza = zaproszenie."); lore.add("§7Gildia: §e" + g.getTag()); lore.add("§8Wazna 5 min.");
+            meta.setLore(lore); wand.setItemMeta(meta); player.getInventory().addItem(wand);
             module.getInviteWandUsers().put(player.getUniqueId(), System.currentTimeMillis() + 300_000L);
-            player.sendMessage("§aMasz rozdzke zaproszen.");
-            return;
+            player.sendMessage("§aMasz rozdzke zaproszen."); return;
         }
         Player t = Bukkit.getPlayerExact(args[1]);
         if (t == null) { player.sendMessage("§cGracz offline."); return; }
@@ -219,13 +224,9 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (g.isMember(t.getUniqueId())) { leader.sendMessage("§cJuz w gildii."); return false; }
         if (guildManager.getGuildByPlayer(t.getUniqueId()) != null) { leader.sendMessage("§cW innej gildii."); return false; }
         ItemCost cost = module.getInviteCost();
-        if (!cost.isEmpty() && (!cost.has(leader) || !cost.take(leader))) {
-            leader.sendMessage("§cBrak: " + cost.describeInline());
-            return false;
-        }
+        if (!cost.isEmpty() && (!cost.has(leader) || !cost.take(leader))) { leader.sendMessage("§cBrak: " + cost.describeInline()); return false; }
         g.addInvite(t.getUniqueId(), System.currentTimeMillis() + INVITE_EXPIRE_MS);
-        leader.sendMessage("§aZaproszono §e" + t.getName());
-        t.sendMessage("§aZaproszenie do §e" + g.getTag() + "§a. /g dolacz " + g.getTag());
+        leader.sendMessage("§aZaproszono §e" + t.getName()); t.sendMessage("§aZaproszenie do §e" + g.getTag() + "§a. /g dolacz " + g.getTag());
         return true;
     }
 
@@ -241,42 +242,30 @@ public class GCommand implements CommandExecutor, TabCompleter {
         Guild g = guildManager.getGuild(args[1]);
         if (g == null) { player.sendMessage("§cBrak gildii."); return; }
         if (!g.hasInvite(player.getUniqueId())) { player.sendMessage("§cBrak zaproszenia."); return; }
-        g.addMember(player.getUniqueId());
-        guildManager.markDirty(g.getTag()); guildManager.save();
-        guildManager.checkAllianceLimit(g);
-        player.sendMessage("§aDolaczono do §e" + g.getTag());
-        territoryBarManager.update(player);
+        g.addMember(player.getUniqueId()); guildManager.markDirty(g.getTag()); guildManager.save(); guildManager.checkAllianceLimit(g);
+        player.sendMessage("§aDolaczono do §e" + g.getTag()); territoryBarManager.update(player);
     }
 
     private void handleDeny(Player player, String[] args) {
         if (args.length < 2) { player.sendMessage("§cUzycie: /g odrzuc <tag>"); return; }
         Guild g = guildManager.getGuild(args[1]);
         if (g == null) { player.sendMessage("§cBrak gildii."); return; }
-        g.removeInvite(player.getUniqueId());
-        player.sendMessage("§7Odrzucono.");
+        g.removeInvite(player.getUniqueId()); player.sendMessage("§7Odrzucono.");
     }
 
     private void handleInfo(Player player, String[] args) {
         Guild g = args.length >= 2 ? guildManager.getGuild(args[1]) : guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null) { player.sendMessage("§cBrak gildii."); return; }
-        player.sendMessage("§6Gildia §e" + g.getTag() + " §7| lider: §f" + nameOf(g.getOwner())
-                + " §7| czlonkow: §f" + g.getMembers().size() + " §7| teren r=" + g.getRadius()
-                + " §7| pkt: §f" + g.getRankPoints());
+        player.sendMessage("§6Gildia §e" + g.getTag() + " §7| lider: §f" + nameOf(g.getOwner()) + " §7| czlonkow: §f" + g.getMembers().size() + " §7| teren r=" + g.getRadius() + " §7| pkt: §f" + g.getRankPoints());
         if (g.hasHome()) player.sendMessage("§7Dom: " + (int) g.getHomeX() + ", " + (int) g.getHomeY() + ", " + (int) g.getHomeZ());
-        for (War w : module.getWarManager().getActiveWarsOf(g.getTag())) {
-            player.sendMessage("§cWojna z §e" + w.getOpponent(g.getTag()) + " §c(koniec za " + WarGuiFmt(w.getRemainingMs()) + ")");
-        }
+        for (War w : module.getWarManager().getActiveWarsOf(g.getTag())) player.sendMessage("§cWojna z §e" + w.getOpponent(g.getTag()) + " §c(koniec za " + WarGuiFmt(w.getRemainingMs()) + ")");
     }
 
-    private static String WarGuiFmt(long ms) {
-        long h = ms / 3_600_000, m = (ms % 3_600_000) / 60_000;
-        return h + "h " + m + "m";
-    }
+    private static String WarGuiFmt(long ms) { long h = ms / 3_600_000, m = (ms % 3_600_000) / 60_000; return h + "h " + m + "m"; }
 
     private void handleList(Player player) {
         if (guildManager.getAll().isEmpty()) { player.sendMessage("§7Brak gildii."); return; }
-        for (Guild g : guildManager.getAll())
-            player.sendMessage("§e" + g.getTag() + " §7- " + g.getMembers().size() + " osob §7| pkt: §f" + g.getRankPoints());
+        for (Guild g : guildManager.getAll()) player.sendMessage("§e" + g.getTag() + " §7- " + g.getMembers().size() + " osob §7| pkt: §f" + g.getRankPoints());
     }
 
     private void handleLeader(Player player, String[] args) {
@@ -285,8 +274,7 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (g == null || !g.isOwner(player.getUniqueId())) { player.sendMessage("§cTylko lider."); return; }
         Player t = Bukkit.getPlayerExact(args[1]);
         if (t == null || !g.isMember(t.getUniqueId())) { player.sendMessage("§cGracz online i w gildii?"); return; }
-        g.setOwner(t.getUniqueId());
-        guildManager.markDirty(g.getTag()); guildManager.save();
+        g.setOwner(t.getUniqueId()); guildManager.markDirty(g.getTag()); guildManager.save();
         player.sendMessage("§aNowy lider: §e" + t.getName());
     }
 
@@ -306,8 +294,7 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (g == null) { player.sendMessage("§cNie jestes w gildii!"); return; }
         if (!g.isLeaderOrDeputy(player.getUniqueId())) { player.sendMessage("§cBrak uprawnien!"); return; }
         if (!g.isInTerritory(player.getLocation())) { player.sendMessage("§cTylko na terenie gildii!"); return; }
-        g.setHome(player.getLocation());
-        guildManager.markDirty(g.getTag()); guildManager.save();
+        g.setHome(player.getLocation()); guildManager.markDirty(g.getTag()); guildManager.save();
         player.sendMessage("§aUstawiono dom.");
     }
 
@@ -329,17 +316,11 @@ public class GCommand implements CommandExecutor, TabCompleter {
         Guild g = guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null) { player.sendMessage("§cNie jestes w gildii!"); return; }
         if (!g.isLeaderOrDeputy(player.getUniqueId())) { player.sendMessage("§cBrak uprawnien!"); return; }
-
         Long cd = ubwCooldown.get(player.getUniqueId());
-        if (cd != null && System.currentTimeMillis() < cd) {
-            player.sendMessage("§cCooldown bazy wypadowej: jeszcze §e" + ((cd - System.currentTimeMillis()) / 1000) + "s§c.");
-            return;
-        }
-
+        if (cd != null && System.currentTimeMillis() < cd) { player.sendMessage("§cCooldown bazy wypadowej: jeszcze §e" + ((cd - System.currentTimeMillis()) / 1000) + "s§c."); return; }
         Location loc = player.getLocation();
         if (g.isInTerritory(loc)) { player.sendMessage("§cNie na wlasnym terenie!"); return; }
         if (guildManager.getGuildAt(loc) != null) { player.sendMessage("§cNie na obcym terenie!"); return; }
-
         Guild target = null;
         for (War w : module.getWarManager().getActiveWarsOf(g.getTag())) {
             Guild og = guildManager.getGuild(w.getOpponent(g.getTag()));
@@ -347,23 +328,10 @@ public class GCommand implements CommandExecutor, TabCompleter {
             double d = og.distanceToBorder(loc);
             if (d > 0 && d <= Const.RAID_NEAR_BLOCKS) { target = og; break; }
         }
-        if (target == null) {
-            player.sendMessage("§cBaze wypadowa mozesz ustawic tylko w poblizu terenu gildii, z ktora masz WOJNE (<=§e"
-                    + (int) Const.RAID_NEAR_BLOCKS + "§c blokow)!");
-            return;
-        }
-
-        Block under = loc.getBlock().getRelative(BlockFace.DOWN);
-        under.setType(Material.OBSIDIAN);
-        Location baseLoc = under.getLocation();
-
-        if (g.getRaidWaypointId() != null) WaypointHook.removeGuildWaypoint(g.getRaidWaypointId());
-        UUID wp = WaypointHook.addGuildWaypoint(player, "Baza wypadowa", baseLoc, 0xFF5555).orElse(null);
-        g.setRaidBase(baseLoc, Const.RAID_DURATION_MS, wp);
-        guildManager.markDirty(g.getTag()); guildManager.save();
-
+        if (target == null) { player.sendMessage("§cBaze wypadowa mozesz ustawic tylko w poblizu terenu gildii, z ktora masz WOJNE (<=§e" + (int) Const.RAID_NEAR_BLOCKS + "§c blokow)!"); return; }
+        Block under = loc.getBlock().getRelative(BlockFace.DOWN); under.setType(Material.OBSIDIAN); Location baseLoc = under.getLocation();
+        g.setRaidBase(baseLoc, Const.RAID_DURATION_MS); guildManager.markDirty(g.getTag()); guildManager.save();
         ubwCooldown.put(player.getUniqueId(), System.currentTimeMillis() + Const.RAID_COOLDOWN_MS);
-
         player.sendMessage("§aUstawiono baze wypadowa na 1h (blok pod Toba = obsydian).");
         player.sendMessage("§7Cel wojny: §e" + target.getTag() + " §7| /g bw = TP.");
         notifyOnlineMembers(g, "§cBaza wypadowa ustawiona! §7(/g bw)");
@@ -379,10 +347,7 @@ public class GCommand implements CommandExecutor, TabCompleter {
     }
 
     private void handleAlliance(Player player, String[] args) {
-        if (args.length < 2) {
-            player.sendMessage("§e/g sojusz <tag> | akceptuj | odrzuc | rozwiaz | lista");
-            return;
-        }
+        if (args.length < 2) { player.sendMessage("§e/g sojusz <tag> | akceptuj | odrzuc | rozwiaz | lista"); return; }
         switch (args[1].toLowerCase()) {
             case "akceptuj", "accept" -> allianceAccept(player, args);
             case "odrzuc", "deny" -> allianceDeny(player, args);
@@ -416,8 +381,7 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (other == null || !own.hasAllianceRequestFrom(other.getTag())) { player.sendMessage("§cBrak prosby."); return; }
         if (!own.getAllies().isEmpty() || !other.getAllies().isEmpty()) { player.sendMessage("§cLimit 1 sojuszu."); return; }
         if (!ALLIANCE_COST.has(player) || !ALLIANCE_COST.take(player)) { player.sendMessage("§cBrak przedmiotow."); return; }
-        own.removeAllianceRequest(other.getTag());
-        own.addAlly(other.getTag()); other.addAlly(own.getTag());
+        own.removeAllianceRequest(other.getTag()); own.addAlly(other.getTag()); other.addAlly(own.getTag());
         guildManager.markDirty(own.getTag()); guildManager.markDirty(other.getTag()); guildManager.save();
         player.sendMessage("§aSojusz z §e" + other.getTag());
     }
@@ -426,8 +390,7 @@ public class GCommand implements CommandExecutor, TabCompleter {
         if (args.length < 3) return;
         Guild own = guildManager.getGuildByPlayer(player.getUniqueId());
         if (own == null) return;
-        own.removeAllianceRequest(args[2]);
-        player.sendMessage("§7Odrzucono.");
+        own.removeAllianceRequest(args[2]); player.sendMessage("§7Odrzucono.");
     }
 
     private void allianceBreak(Player player, String[] args) {
@@ -463,16 +426,18 @@ public class GCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            List<String> subs = Arrays.asList("zaloz", "zapros", "dolacz", "odrzuc", "opusc", "wyrzuc", "rozwiaz",
-                    "info", "lista", "lider", "zastepca", "ustawdom", "dom", "ubw", "bw", "regeneruj", "panel",
-                    "peryskop", "sojusz", "wojna", "pp", "pomoc");
+            List<String> subs = Arrays.asList("zaloz", "zapros", "dolacz", "odrzuc", "opusc", "wyrzuc", "rozwiaz", "info", "lista", "lider", "zastepca", "ustawdom", "dom", "ubw", "bw", "regeneruj", "panel", "peryskop", "sojusz", "wojna", "pp", "pomoc", "ocena", "oceny");
             String in = args[0].toLowerCase();
             return subs.stream().filter(s -> s.startsWith(in)).collect(Collectors.toList());
         }
-        if (args.length == 2 && (args[0].equalsIgnoreCase("dolacz") || args[0].equalsIgnoreCase("info") || args[0].equalsIgnoreCase("odrzuc"))) {
+        if (args.length == 2 && (args[0].equalsIgnoreCase("dolacz") || args[0].equalsIgnoreCase("info") || args[0].equalsIgnoreCase("odrzuc") || args[0].equalsIgnoreCase("ocena"))) {
             String in = args[1].toLowerCase();
             return guildManager.getAll().stream().map(Guild::getTag).filter(t -> t.toLowerCase().startsWith(in)).collect(Collectors.toList());
         }
+        if (args.length == 3 && args[0].equalsIgnoreCase("ocena")) {
+            return Arrays.asList("1", "2", "3", "4", "5").stream().filter(s -> s.startsWith(args[2])).collect(Collectors.toList());
+        }
         return List.of();
     }
+
 }

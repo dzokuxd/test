@@ -1,31 +1,25 @@
 package pl.gildie;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import pl.dzoku.sectorsystem.SectorSystemPlugin;
+import pl.gildie.commands.GACommand;
+import pl.gildie.commands.GCommand;
 import pl.gildie.db.Database;
 import pl.gildie.db.GuildRepository;
 import pl.gildie.db.MonumentRepository;
 import pl.gildie.db.UserRepository;
-import pl.gildie.managers.BuildLockManager;
-import pl.gildie.managers.DigManager;
-import pl.gildie.managers.GuildManager;
-import pl.gildie.managers.PeriscopeManager;
-import pl.gildie.managers.PingScoreboard;
-import pl.gildie.managers.RegenManager;
-import pl.gildie.managers.TerritoryBarManager;
+import pl.gildie.managers.*;
 import pl.gildie.model.Guild;
+import pl.gildie.scoreboard.ModularScoreboardManager;
+import pl.gildie.scoreboard.modules.MonumentScoreboardModule;
+import pl.gildie.scoreboard.modules.PingScoreboardModule;
+import pl.gildie.scoreboard.modules.RatingScoreboardModule;
 import pl.gildie.util.*;
-import pl.gildie.managers.GuildBonusManager;
-import pl.gildie.managers.MonumentManager;
-import pl.gildie.managers.PointsManager;
-import pl.gildie.commands.MonumentCommand;
-import pl.gildie.listeners.CrystalListener;
-import pl.gildie.listeners.MonumentBannerLockListener;
-import pl.gildie.listeners.MonumentEggListener;
-import pl.gildie.listeners.MonumentProtectionListener;
 import pl.gildie.war.EggHologram;
 import pl.gildie.war.TntManager;
 import pl.gildie.war.WarManager;
@@ -53,16 +47,16 @@ public class GildieModule {
     private WarManager warManager;
     private EggHologram eggHologram;
     private MonumentManager monumentManager;
+    private RatingManager ratingManager;
+    private ModularScoreboardManager modularScoreboardManager;
     private ItemCost inviteCost;
     private final Map<UUID, Long> inviteWandUsers = new ConcurrentHashMap<>();
     private boolean enabled = false;
 
     private FileConfiguration cfg;
-
     private pl.sectorsystem.common.mysql.MySQLService mysqlService;
 
     public GildieModule(SectorSystemPlugin sector) { this.sector = sector; }
-
     public void setMysqlService(pl.sectorsystem.common.mysql.MySQLService mysql) { this.mysqlService = mysql; }
 
     public JavaPlugin plugin() { return sector; }
@@ -88,7 +82,6 @@ public class GildieModule {
 
     public void enable() {
         cfg = buildConfig();
-
         database = new Database(mysqlService);
         database.init();
         if (database.isFailed()) {
@@ -120,9 +113,28 @@ public class GildieModule {
         PointsManager.init(monumentRepository);
         GuildBonusManager.init(sector, monumentRepository, guildManager);
         BannerService.init(sector);
-        BannerWaypointTracker.init(sector);
-        MonumentScoreboard.init(sector, monumentRepository, monumentManager);
-        PingScoreboard.init(sector);
+
+        // ── MODULAR SCOREBOARD & RATING SYSTEM ──────────────────────────────
+        ratingManager = new RatingManager(this);
+        modularScoreboardManager = new ModularScoreboardManager(sector, "§6§lSERWER");
+
+        modularScoreboardManager.registerModule(new MonumentScoreboardModule(monumentRepository, monumentManager));
+        modularScoreboardManager.registerModule(new RatingScoreboardModule(ratingManager));
+        modularScoreboardManager.registerModule(new PingScoreboardModule());
+
+        Bukkit.getScheduler().runTaskLater(sector, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) modularScoreboardManager.registerPlayer(p);
+        }, 40L);
+
+        var gCommand = new GCommand(this, guildManager, regenManager, territoryBarManager, ratingManager, modularScoreboardManager);
+        sector.getCommand("g").setExecutor(gCommand);
+        sector.getCommand("g").setTabCompleter(gCommand);
+        sector.getCommand("gildia").setExecutor(gCommand);
+        sector.getCommand("gildia").setTabCompleter(gCommand);
+
+        var gaCommand = new GACommand(this, ratingManager, modularScoreboardManager);
+        sector.getCommand("ga").setExecutor(gaCommand);
+        sector.getCommand("ga").setTabCompleter(gaCommand);
 
         Map<Material, Integer> defaults = new LinkedHashMap<>();
         defaults.put(Material.DIAMOND, Const.INVITE_DIAMOND);
@@ -135,25 +147,23 @@ public class GildieModule {
         sch.runTaskTimer(sector, () -> warManager.tick(), 20L * 20, 20L * 20);
         sch.runTaskTimer(sector, () -> warManager.tickEggRegen(), 20L * 10, 20L * 10);
         sch.runTaskTimer(sector, () -> warManager.flush(), 20L * 5, 20L * 5);
-        sch.runTaskTimer(sector, () -> warManager.tickBannerWaypoints(), 40L, 30L);
         sch.runTaskTimer(sector, () -> guildManager.saveIfDirty(), 20L * 5, 20L * 5);
         sch.runTaskTimer(sector, () -> {
             long now = System.currentTimeMillis();
             for (Guild g : guildManager.getAll()) g.getPendingAlliance().entrySet().removeIf(e -> e.getValue() < now);
         }, 20L * 30, 20L * 30);
 
-        sch.runTaskLater(sector, WaypointHook::reset, 40L);
         sch.runTaskLater(sector, () -> eggHologram.cleanupWorldAndRespawn(guildManager.getAll()), 60L);
 
-        sector.getServer().getPluginManager().registerEvents(new CrystalListener(monumentManager, guildManager, monumentRepository), sector);
-        sector.getServer().getPluginManager().registerEvents(new MonumentEggListener(monumentManager, guildManager), sector);
-        sector.getServer().getPluginManager().registerEvents(new MonumentProtectionListener(monumentManager), sector);
-        sector.getServer().getPluginManager().registerEvents(new MonumentBannerLockListener(sector, guildManager), sector);
+        sector.getServer().getPluginManager().registerEvents(new pl.gildie.listeners.CrystalListener(monumentManager, guildManager, monumentRepository), sector);
+        sector.getServer().getPluginManager().registerEvents(new pl.gildie.listeners.MonumentEggListener(monumentManager, guildManager), sector);
+        sector.getServer().getPluginManager().registerEvents(new pl.gildie.listeners.MonumentProtectionListener(monumentManager), sector);
+        sector.getServer().getPluginManager().registerEvents(new pl.gildie.listeners.MonumentBannerLockListener(sector, guildManager), sector);
 
-        MonumentCommand.register(sector, monumentManager, guildManager);
+        pl.gildie.commands.MonumentCommand.register(sector, monumentManager, guildManager);
 
         enabled = true;
-        sector.getLogger().info("GildieModule (MySQL + Monument) aktywny na sektorze: "
+        sector.getLogger().info("GildieModule (MySQL + Monument + Rating) aktywny na sektorze: "
                 + pl.gildie.sector.SectorProvider.currentSector(sector));
     }
 
@@ -163,11 +173,12 @@ public class GildieModule {
         if (eggHologram != null) eggHologram.removeAll();
         if (territoryBarManager != null) territoryBarManager.shutdown();
         if (buildLockManager != null) buildLockManager.shutdown();
-        if (guildManager != null) guildManager.save();
+        if (guildManager != null) guildManager.saveSync();
         if (regenManager != null) regenManager.saveSync();
         if (warManager != null) warManager.saveSync();
         BannerService.removeBannerItemEntities();
         GuildBonusManager.save();
+        if (modularScoreboardManager != null) modularScoreboardManager.shutdown();
         if (database != null) database.close();
         inviteWandUsers.clear();
     }
@@ -178,8 +189,8 @@ public class GildieModule {
 
     public GuildRepository getGuildRepository() { return guildRepository; }
     public UserRepository getUserRepository() { return userRepository; }
-    public MonumentRepository getMonumentRepository() { return monumentRepository; }
-    public pl.sectorsystem.common.redis.RedisService getRedisService() {return sector.getRedisService();}
+
+    public pl.sectorsystem.common.redis.RedisService getRedisService() { return sector.getRedisService(); }
     public GuildManager getGuildManager() { return guildManager; }
     public RegenManager getRegenManager() { return regenManager; }
     public TerritoryBarManager getTerritoryBarManager() { return territoryBarManager; }
@@ -189,6 +200,9 @@ public class GildieModule {
     public WarManager getWarManager() { return warManager; }
     public EggHologram getEggHologram() { return eggHologram; }
     public MonumentManager getMonumentManager() { return monumentManager; }
+    public RatingManager getRatingManager() { return ratingManager; }
+    public ModularScoreboardManager getModularScoreboardManager() { return modularScoreboardManager; }
     public ItemCost getInviteCost() { return inviteCost; }
     public Map<UUID, Long> getInviteWandUsers() { return inviteWandUsers; }
+
 }

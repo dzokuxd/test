@@ -28,6 +28,10 @@ commands:
   tnt:
     description: Przelaczanie TNT (admin)
     usage: /tnt [on|off]
+  ga:
+    description: Komenda administracji gildii
+    usage: /<command>
+    permission: gildie.admin
 permissions:
   sectorsystem.admin:
     description: Access to admin commands
@@ -35,3 +39,6 @@ permissions:
   sectorsystem.use:
     description: Access to player commands
     default: true
+  gildie.admin:
+    description: Uprawnienia administratora gildii
+    default: op

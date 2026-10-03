@@ -17,7 +17,6 @@ import pl.gildie.Const;
 import pl.gildie.GildieModule;
 import pl.gildie.managers.GuildManager;
 import pl.gildie.model.Guild;
-import pl.gildie.util.WaypointHook;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -45,7 +44,6 @@ public class WarManager {
     private final Map<String, War> activeWars = new ConcurrentHashMap<>();
     private final Map<UUID, War> warsById = new ConcurrentHashMap<>();
     private final List<War> history = new ArrayList<>();
-    private final Map<UUID, UUID> bannerWaypoints = new ConcurrentHashMap<>();
     private final Set<UUID> bannerCarriers = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> lastEggHitAt = new ConcurrentHashMap<>();
     private volatile boolean warsDirty;
@@ -152,6 +150,11 @@ public class WarManager {
     }
 
     private void notifyEggAttack(Guild def, Player attacker, Guild att, int hp, int max, boolean broken) {
+        // ── NAPRAWA BUG 1: feedback dla BIJĄCEGO (widzi HP jajka na actionbarze) ──
+        sendActionBar(attacker, broken
+                ? "§4§lROZBILES JAJO §f" + def.getTag() + "!"
+                : "§c⚔ Jajo §f" + def.getTag() + " §cHP: §f" + hp + "/" + max);
+
         String bar = hp + "/" + max;
         String action = broken ? "§4§lJAJO ROZBITE! §cSztandar zabral §f" + attacker.getName()
                 : "§c⚠ Jajo atakowane! §f" + bar + " §7(" + attacker.getName() + ")";
@@ -220,7 +223,6 @@ public class WarManager {
         setScale(player, 1.6);
         Location top = findHighestBlock(conquered);
         if (top != null) player.teleport(top.add(0.5, 1, 0.5));
-        WaypointHook.startGlobalLiveTrack(player, " SZTANDAR " + conquered.getTag());
         Bukkit.broadcastMessage("§c§l[WOJNA] §e" + player.getName() + " §cprzejal sztandar §e" + conquered.getTag() + "§c!");
         notifyGuild(conquered, "§4SZTANDAR SKRADZIONY!", "§cZabijcie §f" + player.getName(), true, Sound.ENTITY_WITHER_SPAWN);
         markDirty(); save();
@@ -250,7 +252,7 @@ public class WarManager {
 
         if (from != null && from.equalsIgnoreCase(own.getTag())) { recoverBanner(player, war, bannerId, own); return; }
 
-        stripBanner(player, bannerId);
+        stripBanner(player);
         war.clearBanner();
         Guild conquered = guildManager.getGuild(from);
         if (conquered != null && conquered.hasEgg()) {
@@ -264,19 +266,7 @@ public class WarManager {
         markDirty(); save();
     }
 
-    public void tickBannerWaypoints() {
-        for (UUID id : new ArrayList<>(bannerCarriers)) {
-            Player p = Bukkit.getPlayer(id);
-            if (p == null || !p.isOnline()) { WaypointHook.stopGlobalLiveTrack(id); continue; }
-            if (!BannerItem.isBanner(p.getInventory().getHelmet())) {
-                bannerCarriers.remove(id);
-                WaypointHook.stopGlobalLiveTrack(id);
-            }
-        }
-    }
-
     private void recoverBanner(Player player, War war, UUID bannerId, Guild owners) {
-        stripBanner(player, bannerId);
         war.clearBanner();
         int restored = Math.max(1, owners.getMaxEggHp() / 4);
         owners.setEggHp(restored);
@@ -287,31 +277,21 @@ public class WarManager {
         markDirty(); save();
     }
 
-    private void stripBanner(Player player, UUID bannerId) {
+    private void stripBanner(Player player) {
         player.getInventory().setHelmet(null);
         setScale(player, 1.0);
         bannerCarriers.remove(player.getUniqueId());
-        WaypointHook.stopGlobalLiveTrack(player.getUniqueId());
-        UUID wp = bannerWaypoints.remove(bannerId);
-        if (wp != null) WaypointHook.removeWaypoint(wp);
     }
 
     public void handleBannerDeath(Player player) {
         ItemStack helmet = player.getInventory().getHelmet();
         if (!BannerItem.isBanner(helmet)) return;
-        UUID bannerId = BannerItem.getBannerId(helmet), warId = BannerItem.getWarId(helmet);
         player.getInventory().setHelmet(null);
         setScale(player, 1.0);
         bannerCarriers.remove(player.getUniqueId());
-        WaypointHook.stopGlobalLiveTrack(player.getUniqueId());
         Location drop = player.getLocation();
         Item item = player.getWorld().dropItemNaturally(drop, helmet);
         item.setPickupDelay(20);
-        UUID old = bannerWaypoints.remove(bannerId);
-        if (old != null) WaypointHook.removeWaypoint(old);
-        UUID nw = WaypointHook.addGlobalWaypoint("Sztandar (upadl)", drop, 0xFF5555);
-        if (nw != null) bannerWaypoints.put(bannerId, nw);
-        getWarById(warId).ifPresent(w -> w.setBannerCarrierPlayer(null));
         Bukkit.broadcastMessage("§c§l[WOJNA] §eSztandar upadl!");
         markDirty();
     }
@@ -329,9 +309,6 @@ public class WarManager {
         player.getInventory().setHelmet(banner.clone());
         wo.ifPresent(war -> { war.setBannerCarrierPlayer(player.getUniqueId()); war.setBannerCarrierGuild(g.getTag()); });
         bannerCarriers.add(player.getUniqueId());
-        UUID ow = bannerWaypoints.remove(bannerId);
-        if (ow != null) WaypointHook.removeWaypoint(ow);
-        WaypointHook.startGlobalLiveTrack(player, " SZTANDAR " + BannerItem.getFromGuild(banner));
         setScale(player, 1.6);
         markDirty();
     }
@@ -346,9 +323,6 @@ public class WarManager {
     private void markDirty() { warsDirty = true; }
 
     // ── ZASADY KONCA WOJNY ─────────────────────────────────────────────────
-    // 1) brak podbic i brak zabojstw -> przegrywa atakujacy
-    // 2) podbicie > zabojstwa
-    // 3) brak podbic -> wiecej zabojstw wygrywa (remis = obronca)
     private void endWar(War war) {
         String att = war.getAttackerTag(), def = war.getDefenderTag();
         boolean cA = war.isConquestByAttacker(), cD = war.isConquestByDefender();
@@ -400,7 +374,6 @@ public class WarManager {
             if (p != null && BannerItem.isBanner(p.getInventory().getHelmet())) p.getInventory().setHelmet(null);
             if (p != null) setScale(p, 1.0);
             bannerCarriers.remove(carrierId);
-            WaypointHook.stopGlobalLiveTrack(carrierId);
         }
         for (Player p : Bukkit.getOnlinePlayers()) {
             ItemStack h = p.getInventory().getHelmet();
@@ -408,13 +381,10 @@ public class WarManager {
                 p.getInventory().setHelmet(null);
                 setScale(p, 1.0);
                 bannerCarriers.remove(p.getUniqueId());
-                WaypointHook.stopGlobalLiveTrack(p.getUniqueId());
             }
         }
         UUID bannerId = war.getActiveBannerId();
         if (bannerId != null) {
-            UUID wp = bannerWaypoints.remove(bannerId);
-            if (wp != null) WaypointHook.removeWaypoint(wp);
             for (World w : Bukkit.getWorlds())
                 for (Item it : w.getEntitiesByClass(Item.class))
                     if (BannerItem.isBanner(it.getItemStack()) && war.getId().equals(BannerItem.getWarId(it.getItemStack()))) it.remove();
@@ -429,14 +399,15 @@ public class WarManager {
     }
 
     public void save() {
-        Map<String, JsonArray> byAtt = snapshotByAttacker();
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> writeAll(byAtt));
+        Map<String, JsonArray> byTag = snapshotByParticipants();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> writeAll(byTag));
         warsDirty = false;
     }
 
-    public void saveSync() { writeAll(snapshotByAttacker()); warsDirty = false; }
+    public void saveSync() { writeAll(snapshotByParticipants()); warsDirty = false; }
 
-    private Map<String, JsonArray> snapshotByAttacker() {
+    // ── NAPRAWA BUG 2: zapisuje wojne OBU gildiom (attacker + defender) ────
+    private Map<String, JsonArray> snapshotByParticipants() {
         List<War> snap;
         synchronized (history) {
             int extra = history.size() - HISTORY_CAP;
@@ -444,12 +415,15 @@ public class WarManager {
             snap = new ArrayList<>(history);
         }
         Map<String, JsonArray> out = new HashMap<>();
-        for (War w : snap) out.computeIfAbsent(w.getAttackerTag().toUpperCase(), k -> new JsonArray()).add(toJson(w));
+        for (War w : snap) {
+            out.computeIfAbsent(w.getAttackerTag().toUpperCase(), k -> new JsonArray()).add(toJson(w));
+            out.computeIfAbsent(w.getDefenderTag().toUpperCase(), k -> new JsonArray()).add(toJson(w));
+        }
         return out;
     }
 
-    private void writeAll(Map<String, JsonArray> byAtt) {
-        for (Map.Entry<String, JsonArray> e : byAtt.entrySet()) {
+    private void writeAll(Map<String, JsonArray> byTag) {
+        for (Map.Entry<String, JsonArray> e : byTag.entrySet()) {
             try { module.getGuildRepository().saveWarsJson(e.getKey(), gson.toJson(e.getValue())); }
             catch (Exception ex) { log.severe("Wars save fail: " + ex.getMessage()); }
         }
@@ -492,7 +466,15 @@ public class WarManager {
             if (json == null || json.isBlank()) continue;
             try {
                 JsonArray arr = gson.fromJson(json, JsonArray.class);
-                for (JsonElement el : arr) fromJson(el.getAsJsonObject());
+                for (JsonElement el : arr) {
+                    JsonObject m = el.getAsJsonObject();
+                    if (!m.has("id")) continue;
+                    UUID wid;
+                    try { wid = UUID.fromString(m.get("id").getAsString()); } catch (Exception ex) { continue; }
+                    // Wojna jest u obu gildii (att + def) - wczytuj tylko raz, bez duplikatów
+                    if (warsById.containsKey(wid)) continue;
+                    fromJson(m);
+                }
             } catch (Exception ex) { log.warning("Wars load fail: " + ex.getMessage()); }
         }
         List<War> expired = new ArrayList<>();
@@ -533,18 +515,16 @@ public class WarManager {
     public void rebindBanner(Player player) {
         if (player == null) return;
         ItemStack helmet = player.getInventory().getHelmet();
-        if (!BannerItem.isBanner(helmet)) { bannerCarriers.remove(player.getUniqueId()); WaypointHook.stopGlobalLiveTrack(player.getUniqueId()); return; }
+        if (!BannerItem.isBanner(helmet)) { bannerCarriers.remove(player.getUniqueId()); }
         UUID warId = BannerItem.getWarId(helmet), bannerId = BannerItem.getBannerId(helmet);
         Optional<War> opt = getWarById(warId);
         if (opt.isEmpty() || !opt.get().isActive()) {
             player.getInventory().setHelmet(null); setScale(player, 1.0);
-            bannerCarriers.remove(player.getUniqueId()); WaypointHook.stopGlobalLiveTrack(player.getUniqueId());
             return;
         }
         Guild g = guildManager.getGuildByPlayer(player.getUniqueId());
         if (g == null || !opt.get().isParticipant(g.getTag())) {
             player.getInventory().setHelmet(null); setScale(player, 1.0);
-            bannerCarriers.remove(player.getUniqueId()); WaypointHook.stopGlobalLiveTrack(player.getUniqueId());
             return;
         }
         opt.get().setActiveBannerId(bannerId);
@@ -552,7 +532,6 @@ public class WarManager {
         opt.get().setBannerCarrierGuild(g.getTag());
         bannerCarriers.add(player.getUniqueId());
         setScale(player, 1.6);
-        WaypointHook.startGlobalLiveTrack(player, " SZTANDAR " + BannerItem.getFromGuild(helmet));
         markDirty();
     }
 }

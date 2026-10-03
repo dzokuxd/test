@@ -1,3 +1,4 @@
+/*
 package pl.dzoku.sectorsystem.scoreboard;
 
 import net.kyori.adventure.text.Component;
@@ -79,3 +80,4 @@ public class SectorScoreboard {
         obj.getScore(entry).setScore(score);
     }
 }
+*/

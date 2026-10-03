@@ -8,13 +8,16 @@ import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.type.Stairs;
 
 public class GuildEgg {
-    
-    public static void generate(Location playerLoc) {
+
+    /**
+     * Generuje pokój z jajkiem gildii i zwraca lokalizację jajka.
+     */
+    public static Location generate(Location playerLoc) {
         World world = playerLoc.getWorld();
         int cx = playerLoc.getBlockX();
         int cy = playerLoc.getBlockY();
         int cz = playerLoc.getBlockZ();
-        
+
         // Czyść obszar 5x5, wysokość 7 bloków
         for (int x = cx - 2; x <= cx + 2; x++) {
             for (int z = cz - 2; z <= cz + 2; z++) {
@@ -26,14 +29,14 @@ public class GuildEgg {
                 }
             }
         }
-        
+
         // Podłoga 5x5 obsidian (y=cy)
         for (int x = cx - 2; x <= cx + 2; x++) {
             for (int z = cz - 2; z <= cz + 2; z++) {
                 world.getBlockAt(x, cy, z).setType(Material.OBSIDIAN);
             }
         }
-        
+
         // Filary w rogach - WYSOKOŚĆ 5 bloków (y=cy+1 do cy+5)
         int[][] corners = {{cx-2, cz-2}, {cx-2, cz+2}, {cx+2, cz-2}, {cx+2, cz+2}};
         for (int[] c : corners) {
@@ -41,28 +44,31 @@ public class GuildEgg {
                 world.getBlockAt(c[0], y, c[1]).setType(Material.OBSIDIAN);
             }
         }
-        
+
         // Dach - PEŁNY kwadrat 5x5 obsidian (y=cy+5)
         for (int x = cx - 2; x <= cx + 2; x++) {
             for (int z = cz - 2; z <= cz + 2; z++) {
                 world.getBlockAt(x, cy + 5, z).setType(Material.OBSIDIAN);
             }
         }
-        
+
         // Blackstone na środku (y=cy+1)
         world.getBlockAt(cx, cy + 1, cz).setType(Material.BLACKSTONE);
-        
+
         // 4 schody odwrócone przy blackstonie
         setStairs(world, cx - 1, cy + 1, cz, org.bukkit.block.BlockFace.EAST);
         setStairs(world, cx + 1, cy + 1, cz, org.bukkit.block.BlockFace.WEST);
         setStairs(world, cx, cy + 1, cz - 1, org.bukkit.block.BlockFace.SOUTH);
         setStairs(world, cx, cy + 1, cz + 1, org.bukkit.block.BlockFace.NORTH);
-        
-        // End Crystal idealnie na środku
-        Location eggLoc = new Location(world, cx, cy + 1, cz);
-        eggLoc.getBlock().setType(Material.DRAGON_EGG);
+
+        // Dragon egg na środku (y=cy+1)
+        Location eggLoc = new Location(world, cx + 0.5, cy + 1, cz + 0.5);
+        world.getBlockAt(cx, cy + 1, cz).setType(Material.DRAGON_EGG);
+
+        // Zwróć lokalizację jajka (block coords)
+        return new Location(world, cx, cy + 1, cz);
     }
-    
+
     private static void setStairs(World world, int x, int y, int z, org.bukkit.block.BlockFace facing) {
         Block block = world.getBlockAt(x, y, z);
         block.setType(Material.POLISHED_BLACKSTONE_STAIRS);

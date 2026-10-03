@@ -2,11 +2,16 @@ package pl.gildie.listeners;
 
 import org.bukkit.Material;
 import org.bukkit.block.Block;
+import org.bukkit.block.data.Bisected;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.inventory.ItemStack;
 import pl.gildie.Const;
 import pl.gildie.db.GuildRepository;
 import pl.gildie.managers.BuildLockManager;
@@ -14,6 +19,7 @@ import pl.gildie.managers.GuildManager;
 import pl.gildie.model.Guild;
 
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ProtectionListener implements Listener {
@@ -21,6 +27,7 @@ public class ProtectionListener implements Listener {
     private final BuildLockManager buildLock;
     private final GuildRepository repo;
     private final Map<String, Integer> dispenserHits = new ConcurrentHashMap<>();
+    private final Random random = new Random();
 
     public ProtectionListener(GuildManager guildManager, BuildLockManager buildLock, GuildRepository repo) {
         this.guildManager = guildManager;
@@ -69,7 +76,8 @@ public class ProtectionListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
         Block b = event.getBlock();
-
+        Player player = event.getPlayer();
+        ItemStack hand = player.getInventory().getItemInMainHand();
         Guild raid = guildManager.getRaidBaseOwnerAt(b.getLocation());
         if (raid != null) {
             event.setCancelled(true);
@@ -109,5 +117,46 @@ public class ProtectionListener implements Listener {
             event.setCancelled(true);
             event.getPlayer().sendMessage("§cNie mozesz niszczyć na terenie gildii §e" + guild.getTag() + "§c!");
         }
+        if (b.getType() != Material.GRASS_BLOCK &&
+                b.getType() != Material.TALL_GRASS) {
+            return;
+        }
+
+        if (b.getType() == Material.TALL_GRASS) {
+            BlockData data = b.getBlockData();
+            if (data instanceof Bisected bisected) {
+                if (bisected.getHalf() == Bisected.Half.TOP) {
+                    return;
+                }
+            }
+        }
+
+        if (!isHoe(hand.getType())) return;
+
+        event.setDropItems(false);
+
+        int fortuneLevel = hand.getEnchantmentLevel(Enchantment.FORTUNE);
+        int wheatAmount = 1 + random.nextInt(fortuneLevel + 1);
+
+        b.getWorld().dropItemNaturally(
+                b.getLocation(),
+                new ItemStack(Material.WHEAT, wheatAmount)
+        );
+
+        if (random.nextBoolean()) {
+            int seedsAmount = 1 + random.nextInt(fortuneLevel + 1);
+            b.getWorld().dropItemNaturally(
+                    b.getLocation(),
+                    new ItemStack(Material.WHEAT_SEEDS, seedsAmount)
+            );
+        }
+    }
+    private boolean isHoe(Material m) {
+        return m == Material.WOODEN_HOE ||
+                m == Material.STONE_HOE ||
+                m == Material.IRON_HOE ||
+                m == Material.GOLDEN_HOE ||
+                m == Material.DIAMOND_HOE ||
+                m == Material.NETHERITE_HOE;
     }
 }

@@ -1,12 +1,19 @@
 package pl.gildie.db;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MonumentRepository {
+    private static final Gson gson = new Gson();
     private final Database db;
 
     public MonumentRepository(Database db) {
@@ -15,385 +22,274 @@ public class MonumentRepository {
     }
 
     private void createTables() {
-        try (Connection conn = db.getConnection()) {
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_crystals (" +
+        try (Connection conn = db.getConnection(); Statement st = conn.createStatement()) {
+            // JEDNA tabela: pozycje + stan + respawny + hity korony (hits_json, tylko id=0)
+            st.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS monuments (" +
                             "  id INT PRIMARY KEY," +
                             "  world VARCHAR(64) NOT NULL," +
                             "  x DOUBLE NOT NULL," +
                             "  y DOUBLE NOT NULL," +
                             "  z DOUBLE NOT NULL," +
-                            "  type VARCHAR(16) NOT NULL" +
+                            "  type VARCHAR(10) NOT NULL," +
+                            "  active BOOLEAN NOT NULL DEFAULT FALSE," +
+                            "  respawn_at BIGINT NOT NULL DEFAULT 0," +
+                            "  last_spawn_date VARCHAR(10) NULL," +
+                            "  captured_date VARCHAR(10) NULL," +
+                            "  hits_json TEXT NULL" +
                             ")"
             );
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_center_state (" +
-                            "  id INT PRIMARY KEY DEFAULT 1," +
-                            "  active BOOLEAN DEFAULT FALSE," +
-                            "  last_spawn_date VARCHAR(16) DEFAULT NULL," +
-                            "  next_respawn_at BIGINT DEFAULT 0," +
-                            "  captured_date VARCHAR(16) DEFAULT NULL" +
-                            ")"
-            );
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_corner_respawn (" +
-                            "  id INT PRIMARY KEY," +
-                            "  respawn_at BIGINT DEFAULT 0" +
-                            ")"
-            );
+            st.executeUpdate("INSERT IGNORE INTO monuments (id, world, x, y, z, type) VALUES (0,'world',0,0,0,'CENTER')");
+            for (int i = 1; i <= 4; i++)
+                st.executeUpdate("INSERT IGNORE INTO monuments (id, world, x, y, z, type) VALUES (" + i + ",'world',0,0,0,'CORNER')");
 
-            // Tworzenie tabeli z PRIMARY KEY
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_center_hits (" +
-                            "  player_uuid VARCHAR(36) NOT NULL," +
-                            "  player_name VARCHAR(16) NOT NULL," +
-                            "  hits INT DEFAULT 0," +
-                            "  PRIMARY KEY (player_uuid)" +
-                            ")"
-            );
-
-            // 🛠️ NAPRAWA STRUKTURY TABELI
-            dropColumnIfExists(conn, "monument_center_hits", "uuid");
-            dropColumnIfExists(conn, "monument_center_hits", "name");
-            dropColumnIfExists(conn, "monument_corner_points", "uuid");
-            dropColumnIfExists(conn, "monument_corner_points", "name");
-
-            ensureColumnExists(conn, "monument_center_hits", "player_uuid", "VARCHAR(36) NOT NULL DEFAULT ''");
-            ensureColumnExists(conn, "monument_center_hits", "player_name", "VARCHAR(16) NOT NULL DEFAULT ''");
-            ensureColumnExists(conn, "monument_center_hits", "hits", "INT DEFAULT 0");
-
-            // 🔥 KLUCZOWE: Ustaw player_uuid jako PRIMARY KEY (naprawia istniejące tabele)
-            try {
-                conn.createStatement().executeUpdate(
-                        "ALTER TABLE monument_center_hits DROP PRIMARY KEY, ADD PRIMARY KEY (player_uuid)"
-                );
-            } catch (Exception e) {
-                // Może już mieć PRIMARY KEY - ignoruj
-            }
-
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_corner_points (" +
-                            "  player_uuid VARCHAR(36) NOT NULL," +
-                            "  player_name VARCHAR(16) NOT NULL," +
-                            "  points INT DEFAULT 0," +
-                            "  PRIMARY KEY (player_uuid)" +
-                            ")"
-            );
-
-            // Również dla corner_points
-            try {
-                conn.createStatement().executeUpdate(
-                        "ALTER TABLE monument_corner_points DROP PRIMARY KEY, ADD PRIMARY KEY (player_uuid)"
-                );
-            } catch (Exception e) {
-                // Może już mieć PRIMARY KEY - ignoruj
-            }
-
-            conn.createStatement().executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS monument_effects (" +
-                            "  guild_tag VARCHAR(16) PRIMARY KEY," +
-                            "  effects_json TEXT NOT NULL" +
-                            ")"
-            );
+            migrateAndDropOld(st);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private void ensureColumnExists(Connection conn, String tableName, String columnName, String definition) {
+    // Jednorazowa migracja starych danych + sprzątanie
+    private void migrateAndDropOld(Statement st) {
+        try { st.executeUpdate("UPDATE monuments m JOIN monument_crystals c ON c.id = m.id SET m.world=c.world, m.x=c.x, m.y=c.y, m.z=c.z, m.type=c.type"); } catch (Exception ignored) { }
+        try { st.executeUpdate("UPDATE monuments m JOIN monument_center_state s ON s.id = 1 SET m.active=s.active, m.respawn_at=s.next_respawn_at, m.last_spawn_date=s.last_spawn_date, m.captured_date=s.captured_date WHERE m.id=0"); } catch (Exception ignored) { }
+        try { st.executeUpdate("UPDATE monuments m JOIN monument_corner_respawn r ON r.id = m.id SET m.respawn_at=r.respawn_at WHERE m.id BETWEEN 1 AND 4"); } catch (Exception ignored) { }
+        // punkty narożne -> users.monument_points
+        try { st.executeUpdate("UPDATE users u JOIN monument_corner_points p ON p.player_uuid = u.uuid SET u.monument_points = u.monument_points + p.points"); } catch (Exception ignored) { }
+
+        // ── NOWE: migracja efektów ze starej tabeli monument_effects do guilds.monument_effects ──
         try {
-            conn.createStatement().executeUpdate("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
-        } catch (Exception e) {
-            // Ignoruj - kolumna prawdopodobnie już istnieje
-        }
+            st.executeUpdate("UPDATE guilds g JOIN monument_effects m ON m.guild_tag = g.tag SET g.monument_effects = m.effects_json");
+            st.executeUpdate("DROP TABLE IF EXISTS monument_effects");
+        } catch (Exception ignored) { }
+
+        // stare hity korony -> hits_json w monuments
+        try {
+            Map<String, Hit> hits = loadCenterHits();
+            boolean merged = false;
+            try (ResultSet rs = st.executeQuery("SELECT player_uuid, player_name, hits FROM monument_center_hits")) {
+                while (rs.next()) {
+                    Hit h = hits.get(rs.getString(1));
+                    int add = rs.getInt("hits");
+                    hits.put(rs.getString(1), new Hit(rs.getString(1), rs.getString(2), (h == null ? 0 : h.hits) + add));
+                    merged = true;
+                }
+            } catch (Exception ignored) { }
+            if (!merged) {
+                try (ResultSet rs = st.executeQuery("SELECT uuid, name, hits FROM monument_center_hits")) {
+                    while (rs.next()) {
+                        Hit h = hits.get(rs.getString(1));
+                        int add = rs.getInt("hits");
+                        hits.put(rs.getString(1), new Hit(rs.getString(1), rs.getString(2), (h == null ? 0 : h.hits) + add));
+                    }
+                } catch (Exception ignored) { }
+            }
+            if (!hits.isEmpty()) saveCenterHits(hits);
+        } catch (Exception ignored) { }
+
+        // sprzątanie śmieci (jeśli została z poprzedniej poprawki - usuwamy)
+        try { st.executeUpdate("ALTER TABLE users DROP COLUMN center_hits"); } catch (Exception ignored) { }
+        try {
+            st.executeUpdate("DROP TABLE IF EXISTS monument_crystals");
+            st.executeUpdate("DROP TABLE IF EXISTS monument_center_state");
+            st.executeUpdate("DROP TABLE IF EXISTS monument_corner_respawn");
+            st.executeUpdate("DROP TABLE IF EXISTS monument_corner_points");
+            st.executeUpdate("DROP TABLE IF EXISTS monument_center_hits");
+        } catch (Exception ignored) { }
     }
 
-    private void dropColumnIfExists(Connection conn, String tableName, String columnName) {
-        try {
-            conn.createStatement().executeUpdate("ALTER TABLE " + tableName + " DROP COLUMN " + columnName);
-        } catch (Exception e) {
-            // Ignoruj - kolumna prawdopodobnie nie istnieje
-        }
-    }
-
-    // ── Crystal locations ──────────────────────────────────────────────────
+    // ── Kryształy (pozycje + stan) ────────────────────────────────────────
     public List<Crystal> loadCrystals() {
         List<Crystal> list = new ArrayList<>();
         try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT * FROM monument_crystals")) {
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM monuments")) {
             ResultSet rs = ps.executeQuery();
             while (rs.next()) {
-                list.add(new Crystal(
-                        rs.getInt("id"),
-                        rs.getString("world"),
-                        rs.getDouble("x"),
-                        rs.getDouble("y"),
-                        rs.getDouble("z"),
-                        rs.getString("type")
-                ));
+                list.add(new Crystal(rs.getInt("id"), rs.getString("world"),
+                        rs.getDouble("x"), rs.getDouble("y"), rs.getDouble("z"),
+                        rs.getString("type"), rs.getBoolean("active"),
+                        rs.getLong("respawn_at"), rs.getString("last_spawn_date"),
+                        rs.getString("captured_date")));
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
         return list;
     }
 
     public void saveCrystal(int id, String world, double x, double y, double z, String type) {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_crystals (id, world, x, y, z, type) VALUES (?, ?, ?, ?, ?, ?) " +
+                     "INSERT INTO monuments (id, world, x, y, z, type) VALUES (?,?,?,?,?,?) " +
                              "ON DUPLICATE KEY UPDATE world=?, x=?, y=?, z=?, type=?")) {
-            ps.setInt(1, id);
-            ps.setString(2, world);
-            ps.setDouble(3, x);
-            ps.setDouble(4, y);
-            ps.setDouble(5, z);
-            ps.setString(6, type);
-            ps.setString(7, world);
-            ps.setDouble(8, x);
-            ps.setDouble(9, y);
-            ps.setDouble(10, z);
-            ps.setString(11, type);
+            ps.setInt(1, id); ps.setString(2, world); ps.setDouble(3, x); ps.setDouble(4, y); ps.setDouble(5, z); ps.setString(6, type);
+            ps.setString(7, world); ps.setDouble(8, x); ps.setDouble(9, y); ps.setDouble(10, z); ps.setString(11, type);
             ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    // ── Center state ───────────────────────────────────────────────────────
+    private void set(int id, String column, String value) {
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement("UPDATE monuments SET " + column + "=? WHERE id=?")) {
+            if (value == null) ps.setNull(1, java.sql.Types.VARCHAR); else ps.setString(1, value);
+            ps.setInt(2, id);
+            ps.executeUpdate();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    private void set(int id, String column, long value) {
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement("UPDATE monuments SET " + column + "=? WHERE id=?")) {
+            ps.setLong(1, value); ps.setInt(2, id);
+            ps.executeUpdate();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    private void setBool(int id, String column, boolean value) {
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement("UPDATE monuments SET " + column + "=? WHERE id=?")) {
+            ps.setBoolean(1, value); ps.setInt(2, id);
+            ps.executeUpdate();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    public void setActive(int id, boolean active)     { setBool(id, "active", active); }
+    public void setRespawnAt(int id, long t)          { set(id, "respawn_at", t); }
+    public void setLastSpawnDate(int id, String date) { set(id, "last_spawn_date", date); }
+    public void setCapturedDate(int id, String date)  { set(id, "captured_date", date); }
+
     public CenterState getCenterState() {
         try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT * FROM monument_center_state WHERE id = 1")) {
+             PreparedStatement ps = conn.prepareStatement("SELECT * FROM monuments WHERE id=0")) {
             ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return new CenterState(
-                        rs.getBoolean("active"),
-                        rs.getString("last_spawn_date"),
-                        rs.getLong("next_respawn_at"),
-                        rs.getString("captured_date")
-                );
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+            if (rs.next()) return new CenterState(rs.getBoolean("active"), rs.getString("last_spawn_date"), rs.getLong("respawn_at"), rs.getString("captured_date"));
+        } catch (Exception e) { e.printStackTrace(); }
         return new CenterState(false, null, 0L, null);
     }
 
-    public void setCenterActive(boolean active) {
+    // ── Hity korony (TOP5) -> monuments.hits_json (wiersz id=0) ───────────
+    public Map<String, Hit> loadCenterHits() {
         try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_center_state (id, active) VALUES (1, ?) " +
-                             "ON DUPLICATE KEY UPDATE active=?")) {
-            ps.setBoolean(1, active);
-            ps.setBoolean(2, active);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+             PreparedStatement ps = conn.prepareStatement("SELECT hits_json FROM monuments WHERE id=0")) {
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                String json = rs.getString("hits_json");
+                if (json != null && !json.isBlank()) {
+                    Map<String, Hit> m = gson.fromJson(json, new TypeToken<LinkedHashMap<String, Hit>>(){}.getType());
+                    if (m != null) return m;
+                }
+            }
+        } catch (Exception e) { e.printStackTrace(); }
+        return new LinkedHashMap<>();
     }
 
-    public void setCenterLastSpawnDate(String date) {
+    private void saveCenterHits(Map<String, Hit> map) {
         try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_center_state (id, last_spawn_date) VALUES (1, ?) " +
-                             "ON DUPLICATE KEY UPDATE last_spawn_date=?")) {
-            ps.setString(1, date);
-            ps.setString(2, date);
+             PreparedStatement ps = conn.prepareStatement("UPDATE monuments SET hits_json=? WHERE id=0")) {
+            ps.setString(1, gson.toJson(map));
             ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    public void setCenterNextRespawnAt(long time) {
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_center_state (id, next_respawn_at) VALUES (1, ?) " +
-                             "ON DUPLICATE KEY UPDATE next_respawn_at=?")) {
-            ps.setLong(1, time);
-            ps.setLong(2, time);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void setCenterCapturedDate(String date) {
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_center_state (id, captured_date) VALUES (1, ?) " +
-                             "ON DUPLICATE KEY UPDATE captured_date=?")) {
-            ps.setString(1, date);
-            ps.setString(2, date);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    // ── Corner respawn ─────────────────────────────────────────────────────
-    public void setCornerRespawnAt(int id, long time) {
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_corner_respawn (id, respawn_at) VALUES (?, ?) " +
-                             "ON DUPLICATE KEY UPDATE respawn_at=?")) {
-            ps.setInt(1, id);
-            ps.setLong(2, time);
-            ps.setLong(3, time);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    // ─ Center hits (TOP5) ─────────────────────────────────────────────────
     public void addCenterHit(String playerUuid, String playerName) {
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_center_hits (player_uuid, player_name, hits) VALUES (?, ?, 1) " +
-                             "ON DUPLICATE KEY UPDATE hits = hits + 1")) {
-            ps.setString(1, playerUuid);
-            ps.setString(2, playerName);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        Map<String, Hit> map = loadCenterHits();
+        Hit h = map.get(playerUuid);
+        map.put(playerUuid, new Hit(playerUuid, playerName, (h == null ? 0 : h.hits) + 1));
+        saveCenterHits(map);
     }
 
     public List<Hit> getTopCenterHits(int limit) {
-        List<Hit> list = new ArrayList<>();
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT player_uuid, player_name, hits FROM monument_center_hits ORDER BY hits DESC LIMIT ?")) {
-            ps.setInt(1, limit);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                list.add(new Hit(rs.getString("player_uuid"), rs.getString("player_name"), rs.getInt("hits")));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return list;
+        List<Hit> list = new ArrayList<>(loadCenterHits().values());
+        list.sort((a, b) -> Integer.compare(b.hits, a.hits));
+        return list.size() > limit ? new ArrayList<>(list.subList(0, limit)) : list;
     }
 
     public void resetCenterHits() {
-        try (Connection conn = db.getConnection()) {
-            conn.createStatement().executeUpdate("DELETE FROM monument_center_hits");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        saveCenterHits(new LinkedHashMap<>());
     }
 
-    // ─ Corner points ──────────────────────────────────────────────────────
-    public void addCornerPoints(String playerUuid, String playerName, int points) {
+    // ── Punkty monumentu -> users.monument_points (1 narożny / 3 środek) ──
+    public void addMonumentPoints(String uuid, String name, int delta) {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_corner_points (player_uuid, player_name, points) VALUES (?, ?, ?) " +
-                             "ON DUPLICATE KEY UPDATE points = points + ?")) {
-            ps.setString(1, playerUuid);
-            ps.setString(2, playerName);
-            ps.setInt(3, points);
-            ps.setInt(4, points);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void resetCornerPoints() {
-        try (Connection conn = db.getConnection()) {
-            conn.createStatement().executeUpdate("DELETE FROM monument_corner_points");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    // ── Monument points (PointsManager) ────────────────────────────────────
-    public int getMonumentPoints(String playerUuid) {
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT points FROM monument_corner_points WHERE player_uuid=?")) {
-            ps.setString(1, playerUuid);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return rs.getInt("points");
+                     "UPDATE users SET monument_points = GREATEST(0, monument_points + ?), updated_at=? WHERE uuid=?")) {
+            ps.setInt(1, delta); ps.setLong(2, System.currentTimeMillis()); ps.setString(3, uuid);
+            if (ps.executeUpdate() == 0) {
+                try (PreparedStatement ins = conn.prepareStatement(
+                        "INSERT INTO users (uuid, name, monument_points, updated_at) VALUES (?,?,GREATEST(0,?),?)")) {
+                    ins.setString(1, uuid); ins.setString(2, name); ins.setInt(3, delta); ins.setLong(4, System.currentTimeMillis());
+                    ins.executeUpdate();
+                }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    public int getMonumentPoints(String uuid) {
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT monument_points FROM users WHERE uuid=?")) {
+            ps.setString(1, uuid);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getInt(1);
+        } catch (Exception e) { e.printStackTrace(); }
         return 0;
     }
 
-    public void setMonumentPoints(String playerUuid, String playerName, int points) {
+    public List<Hit> getTopMonumentPoints(int limit) {
+        List<Hit> list = new ArrayList<>();
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_corner_points (player_uuid, player_name, points) VALUES (?, ?, ?) " +
-                             "ON DUPLICATE KEY UPDATE points=?")) {
-            ps.setString(1, playerUuid);
-            ps.setString(2, playerName != null ? playerName : "Gracz");
-            ps.setInt(3, points);
-            ps.setInt(4, points);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+                     "SELECT uuid, name, monument_points FROM users WHERE monument_points > 0 ORDER BY monument_points DESC LIMIT ?")) {
+            ps.setInt(1, limit);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) list.add(new Hit(rs.getString("uuid"), rs.getString("name"), rs.getInt("monument_points")));
+        } catch (Exception e) { e.printStackTrace(); }
+        return list;
     }
 
-    // ─ Monument effects (bonusy z korony i narożnych) ─────────────────────
+    // ── Efekty monumentu -> kolumna guilds.monument_effects ───────────────
     public void saveMonumentEffects(String guildTag, String json) {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "INSERT INTO monument_effects (guild_tag, effects_json) VALUES (?, ?) " +
-                             "ON DUPLICATE KEY UPDATE effects_json=?")) {
-            ps.setString(1, guildTag.toUpperCase());
-            ps.setString(2, json);
-            ps.setString(3, json);
+                     "UPDATE guilds SET monument_effects=? WHERE tag=?")) {
+            ps.setString(1, json);
+            ps.setString(2, guildTag.toUpperCase());
             ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     public String loadMonumentEffects(String guildTag) {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT effects_json FROM monument_effects WHERE guild_tag=?")) {
+                     "SELECT monument_effects FROM guilds WHERE tag=?")) {
             ps.setString(1, guildTag.toUpperCase());
             ResultSet rs = ps.executeQuery();
-            if (rs.next()) {
-                return rs.getString("effects_json");
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+            if (rs.next()) return rs.getString(1);
+        } catch (Exception e) { e.printStackTrace(); }
         return null;
     }
 
     public void deleteMonumentEffects(String guildTag) {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM monument_effects WHERE guild_tag=?")) {
+                     "UPDATE guilds SET monument_effects=NULL WHERE tag=?")) {
             ps.setString(1, guildTag.toUpperCase());
             ps.executeUpdate();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    // ── Data classes ───────────────────────────────────────────────────────
+    // ── Klasy danych ───────────────────────────────────────────────────────
     public static class Crystal {
         public final int id;
         public final String world;
         public final double x, y, z;
         public final String type;
+        public final boolean active;
+        public final long respawnAt;
+        public final String lastSpawnDate;
+        public final String capturedDate;
 
-        public Crystal(int id, String world, double x, double y, double z, String type) {
-            this.id = id;
-            this.world = world;
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            this.type = type;
+        public Crystal(int id, String world, double x, double y, double z, String type,
+                       boolean active, long respawnAt, String lastSpawnDate, String capturedDate) {
+            this.id = id; this.world = world; this.x = x; this.y = y; this.z = z; this.type = type;
+            this.active = active; this.respawnAt = respawnAt; this.lastSpawnDate = lastSpawnDate; this.capturedDate = capturedDate;
         }
     }
 
@@ -404,22 +300,19 @@ public class MonumentRepository {
         public final String capturedDate;
 
         public CenterState(boolean active, String lastSpawnDate, long nextRespawnAt, String capturedDate) {
-            this.active = active;
-            this.lastSpawnDate = lastSpawnDate;
-            this.nextRespawnAt = nextRespawnAt;
-            this.capturedDate = capturedDate;
+            this.active = active; this.lastSpawnDate = lastSpawnDate; this.nextRespawnAt = nextRespawnAt; this.capturedDate = capturedDate;
         }
     }
 
     public static class Hit {
-        public final String uuid;
-        public final String name;
-        public final int hits;
+        public String uuid;
+        public String name;
+        public int hits;
+
+        public Hit() { }
 
         public Hit(String uuid, String name, int hits) {
-            this.uuid = uuid;
-            this.name = name;
-            this.hits = hits;
+            this.uuid = uuid; this.name = name; this.hits = hits;
         }
     }
 }

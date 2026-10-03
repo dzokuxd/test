@@ -30,9 +30,7 @@ public class Guild {
     private String raidWorld;
     private double raidX, raidY, raidZ;
     private long raidExpiresAt;
-    private UUID raidWaypointId;
 
-    private UUID guildWaypointId;
 
     private double eggX, eggY = 40, eggZ;
     private boolean hasEgg;
@@ -153,24 +151,22 @@ public class Guild {
         if (world == null) return null;
         return new Location(world, raidX, raidY, raidZ);
     }
-    public void setRaidBase(Location loc, long durationMs, UUID waypointId) {
+    public void setRaidBase(Location loc, long durationMs) {
         if (loc == null || loc.getWorld() == null) return;
         this.raidWorld = loc.getWorld().getName();
         this.raidX = loc.getX(); this.raidY = loc.getY(); this.raidZ = loc.getZ();
         this.raidExpiresAt = System.currentTimeMillis() + durationMs;
-        this.raidWaypointId = waypointId;
     }
-    public void clearRaidBase() { this.raidWorld = null; this.raidExpiresAt = 0; this.raidWaypointId = null; }
+    public void clearRaidBase() { this.raidWorld = null; this.raidExpiresAt = 0;}
     public long getRaidExpiresAt() { return raidExpiresAt; }
-    public UUID getRaidWaypointId() { return raidWaypointId; }
-    public void setRaidWaypointId(UUID id) { this.raidWaypointId = id; }
     public String getRaidWorld() { return raidWorld; }
     public double getRaidX() { return raidX; }
     public double getRaidY() { return raidY; }
     public double getRaidZ() { return raidZ; }
     public void loadRaidBase(String world, double rx, double ry, double rz, long expiresAt, UUID wpId) {
         this.raidWorld = world; this.raidX = rx; this.raidY = ry; this.raidZ = rz;
-        this.raidExpiresAt = expiresAt; this.raidWaypointId = wpId;
+        this.raidExpiresAt = expiresAt;
+
     }
     public boolean isRaidBaseBlock(Location loc) {
         if (!hasActiveRaidBase() || loc == null || loc.getWorld() == null) return false;
@@ -179,9 +175,6 @@ public class Guild {
                 && loc.getBlockY() == (int) Math.floor(raidY)
                 && loc.getBlockZ() == (int) Math.floor(raidZ);
     }
-
-    public UUID getGuildWaypointId() { return guildWaypointId; }
-    public void setGuildWaypointId(UUID id) { this.guildWaypointId = id; }
 
     public Set<String> getAllies() { return allies; }
     public boolean isAlliedWith(String tag) { return tag != null && allies.contains(tag.toUpperCase()); }
@@ -249,5 +242,80 @@ public class Guild {
         int before = eggHp;
         eggHp = Math.min(maxEggHp, eggHp + Math.max(0, amount));
         return eggHp != before;
+    }
+    // ── RATING SYSTEM ──────────────────────────────────────────────────────
+    private int adminRatingSum = 0;
+    private String ratedGuildTag = null;
+    private final Map<UUID, Integer> playerVotes = new HashMap<>();
+    private int receivedPlayerRatingSum = 0;
+    private int receivedPlayerRatingCount = 0;
+
+    public int getAdminRatingSum() { return adminRatingSum; }
+    public void addAdminRating(int rating) { this.adminRatingSum += rating; }
+    public void setAdminRatingSum(int sum) { this.adminRatingSum = sum; }
+
+    public String getRatedGuildTag() { return ratedGuildTag; }
+    public void setRatedGuildTag(String tag) { this.ratedGuildTag = tag; }
+
+    public Map<UUID, Integer> getPlayerVotes() { return playerVotes; }
+    public void addPlayerVote(UUID playerUuid, int rating) { playerVotes.put(playerUuid, rating); }
+    public boolean hasPlayerVoted(UUID playerUuid) { return playerVotes.containsKey(playerUuid); }
+    public void clearPlayerVotes() { playerVotes.clear(); ratedGuildTag = null; }
+    public int getReceivedPlayerRatingSum() { return receivedPlayerRatingSum; }
+    public int getReceivedPlayerRatingCount() { return receivedPlayerRatingCount; }
+    public void addReceivedPlayerRating(int rating) {
+        this.receivedPlayerRatingSum += rating;
+        this.receivedPlayerRatingCount++;
+    }
+    public void resetReceivedPlayerRatings() {
+        this.receivedPlayerRatingSum = 0;
+        this.receivedPlayerRatingCount = 0;
+    }
+    public double getReceivedPlayerRatingAverage() {
+        if (receivedPlayerRatingCount == 0) return 0.0;
+        return (double) receivedPlayerRatingSum / receivedPlayerRatingCount;
+    }
+
+    // Serializacja
+    public String serializeReceivedRatings() {
+        com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
+        obj.addProperty("sum", receivedPlayerRatingSum);
+        obj.addProperty("count", receivedPlayerRatingCount);
+        return obj.toString();
+    }
+
+    public void deserializeReceivedRatings(String json) {
+        receivedPlayerRatingSum = 0;
+        receivedPlayerRatingCount = 0;
+        if (json == null || json.isEmpty()) return;
+        try {
+            com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            receivedPlayerRatingSum = obj.get("sum").getAsInt();
+            receivedPlayerRatingCount = obj.get("count").getAsInt();
+        } catch (Exception ignored) {}
+    }
+
+    public String serializePlayerVotes() {
+        if (playerVotes.isEmpty()) return "[]";
+        com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+        for (Map.Entry<UUID, Integer> e : playerVotes.entrySet()) {
+            com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
+            obj.addProperty("uuid", e.getKey().toString());
+            obj.addProperty("rating", e.getValue());
+            arr.add(obj);
+        }
+        return arr.toString();
+    }
+
+    public void deserializePlayerVotes(String json) {
+        playerVotes.clear();
+        if (json == null || json.isEmpty() || json.equals("[]")) return;
+        try {
+            com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(json).getAsJsonArray();
+            for (com.google.gson.JsonElement el : arr) {
+                com.google.gson.JsonObject obj = el.getAsJsonObject();
+                playerVotes.put(UUID.fromString(obj.get("uuid").getAsString()), obj.get("rating").getAsInt());
+            }
+        } catch (Exception ignored) {}
     }
 }

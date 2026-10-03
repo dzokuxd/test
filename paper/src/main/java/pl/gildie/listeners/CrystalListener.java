@@ -62,9 +62,10 @@ public class CrystalListener implements Listener {
         int dmg = (int) Math.ceil(e.getFinalDamage());
         if (dmg <= 0) dmg = 1;
 
+        // Punkty za hit: 1 (narożny) / 3 (środkowy) -> users.monument_points
         if (PointsManager.tryHit(atk)) PointsManager.addPoints(atk, monumentManager.getPointsForCrystal(c.getLocation()));
 
-        // Licznik uderzen w korone (TOP5)
+        // Licznik uderzen w korone (TOP5) -> monuments.hits_json
         if (monumentManager.isCenter(c.getLocation())) {
             repo.addCenterHit(atk.getUniqueId().toString(), atk.getName());
         }

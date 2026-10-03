@@ -20,6 +20,17 @@ public class BannerService {
 
     public static boolean hasBanner(Player p) { return MonumentBannerItem.isBanner(p.getInventory().getHelmet()); }
 
+    public static void removeAllBanners() {
+        for (org.bukkit.World w : Bukkit.getWorlds()) {
+            for (Entity e : w.getEntities()) {
+                if (e instanceof Item it && MonumentBannerItem.isBanner(it.getItemStack())) {
+                    removeDroppedBannerData(it);
+                    it.remove();
+                }
+            }
+        }
+    }
+
     public static void giveBanner(Player p, ItemStack banner) {
         if (hasBanner(p)) return;
         ItemStack old = p.getInventory().getHelmet();
@@ -40,28 +51,13 @@ public class BannerService {
         item.setPickupDelay(20);
         item.setUnlimitedLifetime(true);
         item.getPersistentDataContainer().set(MonumentBannerItem.DROP_ID_KEY, PersistentDataType.STRING, dropId.toString());
-        addWaypoint(item);
         return item;
     }
 
-    public static void addWaypoint(Item item) {
-        if (!MonumentBannerItem.isBanner(item.getItemStack())) return;
-        if (item.getPersistentDataContainer().has(MonumentBannerItem.WAYPOINT_KEY, PersistentDataType.STRING)) return;
-        String guild = MonumentBannerItem.getOwnerGuild(item.getItemStack());
-        String name = "§6Sztandar Monumentu";
-        int color = Const.MONUMENT_BANNER_WP_COLOR;
-        UUID wp = (Const.MONUMENT_BANNER_GLOBAL_WP || guild == null)
-                ? WaypointHook.addGlobalWaypoint(name, item.getLocation(), color)
-                : WaypointHook.addGuildWaypoint(guild, name, item.getLocation(), color).orElse(null);
-        if (wp != null) item.getPersistentDataContainer().set(MonumentBannerItem.WAYPOINT_KEY, PersistentDataType.STRING, wp.toString());
-    }
 
     public static void removeDroppedBannerData(Item item) {
         if (!MonumentBannerItem.isBanner(item.getItemStack())) return;
-        String wr = item.getPersistentDataContainer().get(MonumentBannerItem.WAYPOINT_KEY, PersistentDataType.STRING);
-        if (wr != null) { try { WaypointHook.removeWaypoint(UUID.fromString(wr)); } catch (Exception ignored) {} }
         item.getPersistentDataContainer().remove(MonumentBannerItem.DROP_ID_KEY);
-        item.getPersistentDataContainer().remove(MonumentBannerItem.WAYPOINT_KEY);
     }
 
     public static void removeBannerItemEntities() {

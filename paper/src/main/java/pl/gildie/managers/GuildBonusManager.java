@@ -15,7 +15,6 @@ import org.bukkit.potion.PotionEffectType;
 import pl.gildie.Const;
 import pl.gildie.db.MonumentRepository;
 import pl.gildie.model.Guild;
-import pl.gildie.util.WaypointHook;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,7 +31,6 @@ public class GuildBonusManager implements Listener {
     private static GuildManager guildManager;
 
     private static final Map<String, Long> centerBonus = new HashMap<>();
-    private static final Map<String, UUID> centerWaypoints = new HashMap<>();
     private static final Map<String, Map<String, Long>> cornerEffects = new HashMap<>();
 
     public static void init(JavaPlugin p, MonumentRepository r, GuildManager gm) {
@@ -42,9 +40,8 @@ public class GuildBonusManager implements Listener {
         Bukkit.getScheduler().runTaskTimer(p, () -> { applyEffects(); cleanExpired(); }, 40L, 40L);
     }
 
-    public static void addCenterBonus(String tag, UUID wp) {
+    public static void addCenterBonus(String tag) {
         centerBonus.put(tag.toUpperCase(), System.currentTimeMillis() + Const.MONUMENT_CENTER_BONUS_MS);
-        if (wp != null) centerWaypoints.put(tag.toUpperCase(), wp);
         save();
     }
 
@@ -77,14 +74,33 @@ public class GuildBonusManager implements Listener {
         return sb.length() == 0 ? "brak" : sb.toString().trim();
     }
 
+    // ── NOWE: dla MonumentManager (pkt 4) ────────────────────────────────
+    /** Czy JAKAKOLWIEK gildia trzyma aktywny efekt monumentu (korona lub narożne). */
+    public static boolean anyActiveEffect() {
+        long now = System.currentTimeMillis();
+        for (Long exp : centerBonus.values()) if (exp > now) return true;
+        for (Map<String, Long> fx : cornerEffects.values())
+            for (Long exp : fx.values()) if (exp > now) return true;
+        return false;
+    }
+
+    /** Najbliższy koniec efektu (epoch ms) albo 0 jeśli nic nie jest aktywne. */
+    public static long soonestEffectExpiry() {
+        long now = System.currentTimeMillis();
+        long min = Long.MAX_VALUE;
+        for (Long exp : centerBonus.values()) if (exp > now && exp < min) min = exp;
+        for (Map<String, Long> fx : cornerEffects.values())
+            for (Long exp : fx.values()) if (exp > now && exp < min) min = exp;
+        return min == Long.MAX_VALUE ? 0 : min;
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     public static void cleanExpired() {
         long now = System.currentTimeMillis();
         boolean ch = false;
         for (String t : new HashSet<>(centerBonus.keySet())) {
             if (now > centerBonus.get(t)) {
                 centerBonus.remove(t); ch = true;
-                UUID wp = centerWaypoints.remove(t);
-                if (wp != null) WaypointHook.removeWaypoint(wp);
             }
         }
         for (String t : new HashSet<>(cornerEffects.keySet())) {
@@ -137,7 +153,8 @@ public class GuildBonusManager implements Listener {
     }
 
     public static void load() {
-        centerBonus.clear(); centerWaypoints.clear(); cornerEffects.clear();
+        centerBonus.clear();
+        cornerEffects.clear();
         for (Guild g : guildManager.getAll()) {
             String json = repo.loadMonumentEffects(g.getTag());
             if (json == null || json.isBlank()) continue;
@@ -148,9 +165,6 @@ public class GuildBonusManager implements Listener {
                     long exp = c.get("expires").getAsLong();
                     if (exp > System.currentTimeMillis()) {
                         centerBonus.put(g.getTag().toUpperCase(), exp);
-                        if (c.has("waypoint")) {
-                            try { centerWaypoints.put(g.getTag().toUpperCase(), UUID.fromString(c.get("waypoint").getAsString())); } catch (Exception ignored) {}
-                        }
                     }
                 }
                 if (obj.has("corners")) {
@@ -173,8 +187,6 @@ public class GuildBonusManager implements Listener {
             if (cExp != null) {
                 JsonObject c = new JsonObject();
                 c.addProperty("expires", cExp);
-                UUID wp = centerWaypoints.get(g.getTag().toUpperCase());
-                if (wp != null) c.addProperty("waypoint", wp.toString());
                 obj.add("center", c);
             }
             Map<String, Long> fx = cornerEffects.get(g.getTag().toUpperCase());

@@ -11,12 +11,15 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import pl.gildie.Const;
 import pl.gildie.db.MonumentRepository;
+import pl.gildie.util.BannerService;
 import pl.gildie.util.CrystalHP;
 import pl.gildie.sector.SectorProvider;
+import pl.gildie.util.MonumentMsg;
 
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
@@ -25,6 +28,7 @@ import java.util.UUID;
 
 public class MonumentManager {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final ZoneId ZONE = ZoneId.of("Europe/Warsaw");
 
     private final JavaPlugin plugin;
     private final MonumentRepository repo;
@@ -72,47 +76,46 @@ public class MonumentManager {
         }
     }
 
-    // Srodek wraca po restarcie TYLKO jesli byl spawniety DZIS i nadal zyje.
-    // Jesli dzis jeszcze nie bylo 18:00 (lastSpawnDate != today) -> nie ma go.
+    // ── START SERWERA: równa godzina + kontrola efektów gildii ────────────
     private void restoreAfterRestart() {
         boolean inGuildSector = SectorProvider.isGuildSector(plugin);
         LocalDateTime now = LocalDateTime.now();
         boolean isFullHour = now.getMinute() == 0;
 
         if (!inGuildSector) {
-            plugin.getLogger().info("[Monument] Serwer nie jest w sektorze gildii - kryształy NIE będą respione.");
-            repo.setCenterActive(false);
-            for (int i = 1; i <= 4; i++) repo.setCornerRespawnAt(i, 0L);
+            plugin.getLogger().info("[Monument] Poza sektorem gildii - kryształy NIE będą respione.");
+            repo.setActive(0, false);
+            for (int i = 1; i <= 4; i++) repo.setRespawnAt(i, 0L);
             lastCornerHour = now.getHour();
             return;
         }
 
         if (!isFullHour) {
-            plugin.getLogger().info("[Monument] Serwer uruchomiony o " + now.getHour() + ":"
-                    + String.format("%02d", now.getMinute()) + " - nie jest równa godzina. "
-                    + "Kryształy zrespią się o " + (now.getHour() + 1) + ":00");
-            repo.setCenterActive(false);
-            for (int i = 1; i <= 4; i++) repo.setCornerRespawnAt(i, 0L);
+            plugin.getLogger().info("[Monument] Start o " + now.getHour() + ":" + String.format("%02d", now.getMinute())
+                    + " - nie równa godzina. Kryształy zrespią się o " + (now.getHour() + 1) + ":00");
+            repo.setActive(0, false);
+            for (int i = 1; i <= 4; i++) repo.setRespawnAt(i, 0L);
             lastCornerHour = now.getHour();
             return;
         }
 
-        // Jest równa godzina i sektor gildii - respiemy normalnie
-        plugin.getLogger().info("[Monument] Serwer uruchomiony o równej godzinie ("
-                + now.getHour() + ":00) w sektorze gildii - respimy kryształy.");
+        if (GuildBonusManager.anyActiveEffect()) {
+            long sec = secondsUntilEffectEnd();
+            plugin.getLogger().info("[Monument] Równa godzina, ALE gildia ma aktywny efekt"
+                    + (sec > 0 ? " (kończy się za " + fmt(sec) + ")" : "") + " - NAROŻNE NIE respią się.");
+        } else {
+            plugin.getLogger().info("[Monument] Równa godzina, brak aktywnych efektów - respiemy NAROŻNE.");
+            for (int i = 1; i <= 4; i++) {
+                if (!cornerCrystalIds.containsKey(i)) spawnCorner(i, false);
+            }
+        }
 
-        LocalDate today = LocalDate.now();
         MonumentRepository.CenterState cs = repo.getCenterState();
-        String todayStr = today.format(DATE_FORMAT);
-
+        String todayStr = LocalDate.now().format(DATE_FORMAT);
         if (cs.active && todayStr.equals(cs.lastSpawnDate)) {
             spawnCenter(false);
         } else {
-            repo.setCenterActive(false);
-        }
-
-        for (int i = 1; i <= 4; i++) {
-            if (!cornerCrystalIds.containsKey(i)) spawnCorner(i, false);
+            repo.setActive(0, false);
         }
         lastCornerHour = now.getHour();
     }
@@ -122,38 +125,45 @@ public class MonumentManager {
         String today = now.format(DATE_FORMAT);
         boolean inGuildSector = SectorProvider.isGuildSector(plugin);
 
-        // Narozne: co pelna godzine -> brak = spawn, zywy = full HP
+        // ── NAROŻNE: pełna godzina + brak aktywnego efektu gildii ──────────
         if (now.getMinute() == 0 && lastCornerHour != now.getHour()) {
             lastCornerHour = now.getHour();
 
             if (inGuildSector) {
-                // CZYSZCZENIE BAZY - reset punktów graczy przed respawem
-                repo.resetCornerPoints();
-
-                for (int i = 1; i <= 4; i++) {
-                    UUID id = cornerCrystalIds.get(i);
-                    if (id != null) CrystalHP.set(id, Const.MONUMENT_CRYSTAL_HP);
-                    else spawnCorner(i, false);
+                if (GuildBonusManager.anyActiveEffect()) {
+                    long sec = secondsUntilEffectEnd();
+                    plugin.getLogger().info("[Monument] " + now.getHour() + ":00 - gildia trzyma efekt"
+                            + (sec > 0 ? " (koniec za " + fmt(sec) + ")" : "") + " - narożne NIE respią się.");
+                } else {
+                    for (int i = 1; i <= 4; i++) {
+                        UUID id = cornerCrystalIds.get(i);
+                        if (id != null) CrystalHP.set(id, Const.MONUMENT_CRYSTAL_HP);
+                        else spawnCorner(i, false);
+                    }
                 }
             }
         }
 
-        // Srodek: WYLACZNIE od 18:00 i tylko raz dziennie, DOKŁADNIE o równej godzinie
+        // ── ŚRODEK: WYŁĄCZNIE 18:00, raz dziennie ──────────────────────────
         MonumentRepository.CenterState cs = repo.getCenterState();
         boolean centerAlive = centerCrystalId != null;
         boolean spawnedToday = today.equals(cs.lastSpawnDate);
 
         if (inGuildSector && now.getMinute() == 0) {
             if (!centerAlive && !spawnedToday && now.getHour() == Const.MONUMENT_CENTER_SPAWN_HOUR) {
-                // CZYSZCZENIE BAZY - reset topu uderzen przed respawem korony
-                repo.resetCenterHits();
-
+                repo.resetCenterHits();   // nowa korona = nowy TOP5
                 spawnCenter(false);
                 centerAlive = true;
             }
         }
 
         updateBossBars(now, centerAlive, spawnedToday);
+    }
+
+    private long secondsUntilEffectEnd() {
+        long exp = GuildBonusManager.soonestEffectExpiry();
+        if (exp <= 0) return 0;
+        return Math.max(0, (exp - System.currentTimeMillis()) / 1000);
     }
 
     private void updateBossBars(LocalDateTime now, boolean centerAlive, boolean spawnedToday) {
@@ -183,7 +193,7 @@ public class MonumentManager {
         return Duration.between(now, target).getSeconds();
     }
 
-    // ── Scoreboard: pozostałe ŻYCIE środka ─────────────────────────────────
+    // ── Scoreboard ─────────────────────────────────────────────────────────
     public boolean isCenterActive() { return centerCrystalId != null; }
 
     public String describeCenterHp() {
@@ -225,16 +235,26 @@ public class MonumentManager {
         if (bar != null && !bar.getPlayers().isEmpty()) bar.removeAll();
     }
 
-    // ── START / STOP (center / corner / all) ───────────────────────────────
+    // ── START / STOP ───────────────────────────────────────────────────────
     public void startCenter() { spawnCenter(true); }
 
     public void stopCenter() {
         if (centerCrystalId != null) removeCrystalEntity(centerCrystalId);
         clearCrystalsAt(centerLocation);
         centerCrystalId = null;
-        repo.setCenterActive(false);
-        repo.setCenterNextRespawnAt(0L);
+        repo.setActive(0, false);
+        repo.setRespawnAt(0, 0L);
+        clearBanners();
         hideBar(getCenterBar());
+    }
+    public void clearBanners() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (BannerService.hasBanner(p)) {
+                p.getInventory().setHelmet(null);
+                p.sendMessage(MonumentMsg.error("Twoj sztandar monumentu zostal zabrany (monument stop)."));
+            }
+        }
+        BannerService.removeAllBanners();
     }
 
     public void startCorners() { for (int i = 1; i <= 4; i++) spawnCorner(i, true); }
@@ -242,14 +262,34 @@ public class MonumentManager {
     public void stopCorners() {
         for (UUID id : cornerCrystalIds.values()) removeCrystalEntity(id);
         cornerCrystalIds.clear();
-        for (int i = 1; i <= 4; i++) repo.setCornerRespawnAt(i, 0L);
+        for (int i = 1; i <= 4; i++) repo.setRespawnAt(i, 0L);
+        clearBanners();
         hideBar(getCornerBar());
     }
 
     public void startAll() { startCenter(); startCorners(); }
     public void stopAll() { stopCenter(); stopCorners(); }
 
-    // ─ Spawn / destroy ────────────────────────────────────────────────────
+    // ── STOP SERWERA: clear WSZYSTKICH end crystals ───────────────────────
+    public void shutdown() {
+        repo.setActive(0, false);
+        for (int i = 1; i <= 4; i++) {
+            if (!cornerCrystalIds.containsKey(i)) repo.setRespawnAt(i, 0L);
+        }
+        for (World w : Bukkit.getWorlds()) {
+            for (EnderCrystal c : w.getEntitiesByClass(EnderCrystal.class)) {
+                CrystalHP.remove(c.getUniqueId());
+                c.remove();
+            }
+        }
+        centerCrystalId = null;
+        cornerCrystalIds.clear();
+        hideBar(getCenterBar());
+        hideBar(getCornerBar());
+        plugin.getLogger().info("[Monument] Shutdown: wszystkie end crystals wyczyszczone.");
+    }
+
+    // ── Spawn / destroy ────────────────────────────────────────────────────
     private void clearCrystalsAt(Location loc) {
         if (loc == null || loc.getWorld() == null) return;
         for (org.bukkit.entity.Entity e : loc.getWorld().getNearbyEntities(loc, 2, 4, 2)) {
@@ -269,9 +309,9 @@ public class MonumentManager {
         c.setShowingBottom(false); c.setInvulnerable(false);
         CrystalHP.set(c.getUniqueId(), Const.MONUMENT_CRYSTAL_HP);
         centerCrystalId = c.getUniqueId();
-        repo.setCenterActive(true);
-        repo.setCenterLastSpawnDate(LocalDate.now().format(DATE_FORMAT));
-        repo.setCenterNextRespawnAt(0L);
+        repo.setActive(0, true);
+        repo.setLastSpawnDate(0, LocalDate.now().format(DATE_FORMAT));
+        repo.setRespawnAt(0, 0L);
         Bukkit.broadcastMessage("§6§l[MONUMENT] §eSrodkowy crystal zostal przywolany!");
     }
 
@@ -285,7 +325,7 @@ public class MonumentManager {
         c.setShowingBottom(false); c.setInvulnerable(false);
         CrystalHP.set(c.getUniqueId(), Const.MONUMENT_CRYSTAL_HP);
         cornerCrystalIds.put(id, c.getUniqueId());
-        repo.setCornerRespawnAt(id, 0L);
+        repo.setRespawnAt(id, 0L);
     }
 
     private void removeCrystalEntity(UUID u) {
@@ -297,8 +337,8 @@ public class MonumentManager {
 
     public void centerDestroyedByGuild() {
         centerCrystalId = null;
-        repo.setCenterActive(false);
-        repo.setCenterNextRespawnAt(0L);
+        repo.setActive(0, false);
+        repo.setRespawnAt(0, 0L);
         giveTopRewards();
     }
 
@@ -319,24 +359,24 @@ public class MonumentManager {
 
     public void centerDestroyedNoGuild() {
         centerCrystalId = null;
-        repo.setCenterActive(false);
-        repo.setCenterNextRespawnAt(0L);
+        repo.setActive(0, false);
+        repo.setRespawnAt(0, 0L);
     }
 
     public void centerDelivered() {
-        repo.setCenterActive(false);
-        repo.setCenterCapturedDate(LocalDate.now().format(DATE_FORMAT));
-        repo.setCenterNextRespawnAt(0L);
+        repo.setActive(0, false);
+        repo.setCapturedDate(0, LocalDate.now().format(DATE_FORMAT));
+        repo.setRespawnAt(0, 0L);
     }
 
     public void cornerDestroyedByGuild(int id) {
         cornerCrystalIds.remove(id);
-        repo.setCornerRespawnAt(id, 0L);
+        repo.setRespawnAt(id, 0L);
     }
 
     public void cornerDestroyedNoGuild(int id) {
         cornerCrystalIds.remove(id);
-        repo.setCornerRespawnAt(id, 0L);
+        repo.setRespawnAt(id, 0L);
     }
 
     public boolean isMonumentCrystal(UUID u) {

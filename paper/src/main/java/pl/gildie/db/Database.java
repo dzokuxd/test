@@ -25,7 +25,7 @@ public class Database {
             Logger.getLogger("Gildie").severe("MySQLService not available");
             return;
         }
-        
+
         try {
             createTables();
             migrate();
@@ -33,6 +33,7 @@ public class Database {
         } catch (Exception e) {
             failed = true;
             Logger.getLogger("Gildie").severe("MySQL init failed: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -51,18 +52,24 @@ public class Database {
                     + " home JSON NULL,"
                     + " raid_base JSON NULL,"
                     + " raid_base_exp BIGINT NULL,"
-                    + " raid_waypoint CHAR(36) NULL,"
-                    + " guild_waypoint CHAR(36) NULL,"
                     + " egg JSON NULL,"
                     + " regen_blocks JSON NULL,"
                     + " wars JSON NULL,"
                     + " monument_effects JSON NULL,"
                     + " monument_center_captured_date VARCHAR(10) NULL,"
                     + " rank_points INT NOT NULL DEFAULT 1000,"
+                    // ── NOWE KOLUMNY SYSTEMU OCENIANIA (dla nowych instalacji) ──
+                    + " admin_rating_sum INT NOT NULL DEFAULT 0,"
+                    + " rated_guild_tag VARCHAR(10) NULL,"
+                    + " player_votes JSON NULL,"
+                    + " received_player_rating_sum INT NOT NULL DEFAULT 0,"
+                    + " received_player_rating_count INT NOT NULL DEFAULT 0,"
+                    // ─────────────────────────────────────────────────────────────
                     + " created_at BIGINT NOT NULL,"
                     + " updated_at BIGINT NOT NULL,"
                     + " INDEX idx_owner (owner_uuid)"
                     + ")");
+
             st.execute("CREATE TABLE IF NOT EXISTS users ("
                     + " uuid CHAR(36) PRIMARY KEY,"
                     + " name VARCHAR(16) NOT NULL,"
@@ -80,21 +87,10 @@ public class Database {
                     + " INDEX idx_guild (guild_tag),"
                     + " INDEX idx_name (name)"
                     + ")");
-            st.execute("CREATE TABLE IF NOT EXISTS monument_crystals ("
-                    + " id INT PRIMARY KEY,"
-                    + " world VARCHAR(32) NOT NULL,"
-                    + " x DOUBLE NOT NULL, y DOUBLE NOT NULL, z DOUBLE NOT NULL,"
-                    + " type VARCHAR(10) NOT NULL,"
-                    + " active BOOLEAN NOT NULL DEFAULT FALSE,"
-                    + " respawn_at BIGINT NOT NULL DEFAULT 0,"
-                    + " last_spawn_date VARCHAR(10) NULL,"
-                    + " captured_date VARCHAR(10) NULL,"
-                    + " INDEX idx_type (type)"
-                    + ")");
-            st.execute("CREATE TABLE IF NOT EXISTS monument_center_hits ("
-                    + " uuid CHAR(36) PRIMARY KEY,"
-                    + " name VARCHAR(16) NOT NULL,"
-                    + " hits INT NOT NULL DEFAULT 0"
+
+            st.execute("CREATE TABLE IF NOT EXISTS monument_effects ("
+                    + " guild_tag VARCHAR(16) PRIMARY KEY,"
+                    + " effects_json TEXT NOT NULL"
                     + ")");
             st.execute("CREATE TABLE IF NOT EXISTS placed_dispensers ("
                     + " world VARCHAR(32) NOT NULL,"
@@ -102,23 +98,35 @@ public class Database {
                     + " owner_tag VARCHAR(5) NULL,"
                     + " PRIMARY KEY (world, x, y, z)"
                     + ")");
-            st.execute("INSERT IGNORE INTO monument_crystals (id, world, x, y, z, type) VALUES (0,'world',0,0,0,'CENTER')");
-            for (int i = 1; i <= 4; i++) {
-                st.execute("INSERT IGNORE INTO monument_crystals (id, world, x, y, z, type) VALUES (" + i + ",'world',0,0,0,'CORNER')");
-            }
         }
     }
 
     private void migrate() throws Exception {
         try (Connection c = mysqlService.getConnection(); Statement st = c.createStatement()) {
+            // Istniejące migracje
             st.execute("ALTER TABLE guilds MODIFY regen_blocks JSON NULL");
             st.execute("ALTER TABLE guilds MODIFY wars JSON NULL");
             st.execute("ALTER TABLE guilds ADD COLUMN monument_effects JSON NULL");
             st.execute("ALTER TABLE guilds ADD COLUMN monument_center_captured_date VARCHAR(10) NULL");
             st.execute("ALTER TABLE guilds ADD COLUMN rank_points INT NOT NULL DEFAULT 1000");
             st.execute("ALTER TABLE users ADD COLUMN monument_points INT NOT NULL DEFAULT 0");
-            st.execute("ALTER TABLE monument_crystals ADD COLUMN captured_date VARCHAR(10) NULL");
-        } catch (Exception ignored) { }
+
+            // ── NOWE MIGRACJE SYSTEMU OCENIANIA (dla istniejących instalacji) ──
+            // Ignorujemy błędy, jeśli kolumny już istnieją (SQLState 42S21)
+            try { st.execute("ALTER TABLE guilds ADD COLUMN admin_rating_sum INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
+            try { st.execute("ALTER TABLE guilds ADD COLUMN rated_guild_tag VARCHAR(10) NULL"); } catch (Exception ignored) {}
+            try { st.execute("ALTER TABLE guilds ADD COLUMN player_votes JSON NULL"); } catch (Exception ignored) {}
+            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_rating_sum INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
+            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_rating_count INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
+            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_ratings JSON NULL"); } catch (Exception ignored) {}
+            // ─────────────────────────────────────────────────────────────────────
+
+        } catch (Exception e) {
+            // Logujemy tylko krytyczne błędy, ignorujemy te o "Duplicate column name"
+            if (!e.getMessage().contains("Duplicate column name")) {
+                throw e;
+            }
+        }
     }
 
     public Connection getConnection() throws SQLException {
