@@ -7,8 +7,8 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import pl.dzoku.sectorsystem.SectorSystemPlugin;
-import pl.gildie.commands.GACommand;
-import pl.gildie.commands.GCommand;
+import pl.gildie.commands.GuildAdminCommand;
+import pl.gildie.commands.GuildCommand;
 import pl.gildie.db.Database;
 import pl.gildie.db.GuildRepository;
 import pl.gildie.db.MonumentRepository;
@@ -126,13 +126,13 @@ public class GildieModule {
             for (Player p : Bukkit.getOnlinePlayers()) modularScoreboardManager.registerPlayer(p);
         }, 40L);
 
-        var gCommand = new GCommand(this, guildManager, regenManager, territoryBarManager, ratingManager, modularScoreboardManager);
+        var gCommand = new GuildCommand(this, guildManager, regenManager, territoryBarManager, ratingManager, modularScoreboardManager);
         sector.getCommand("g").setExecutor(gCommand);
         sector.getCommand("g").setTabCompleter(gCommand);
         sector.getCommand("gildia").setExecutor(gCommand);
         sector.getCommand("gildia").setTabCompleter(gCommand);
 
-        var gaCommand = new GACommand(this, ratingManager, modularScoreboardManager);
+        var gaCommand = new GuildAdminCommand(this, ratingManager, modularScoreboardManager);
         sector.getCommand("ga").setExecutor(gaCommand);
         sector.getCommand("ga").setTabCompleter(gaCommand);
 

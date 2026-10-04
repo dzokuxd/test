@@ -16,12 +16,15 @@ import java.util.Map;
 import java.util.UUID;
 
 public class GuildRepository {
+
     private static final Gson gson = new Gson();
     private final Database db;
 
     public GuildRepository(Database db) {
         this.db = db;
     }
+
+    // ═══════════════════════ LOAD ═══════════════════════
 
     public List<Guild> loadAll() {
         List<Guild> out = new ArrayList<>();
@@ -38,107 +41,123 @@ public class GuildRepository {
     private Guild fromRow(ResultSet rs) throws SQLException {
         String tag = rs.getString("tag");
         UUID owner = UUID.fromString(rs.getString("owner_uuid"));
-        JsonObject center = gson.fromJson(rs.getString("center"), JsonObject.class);
-        Guild g = new Guild(tag, owner, JsonLoc.world(center), JsonLoc.x(center), JsonLoc.y(center), JsonLoc.z(center), rs.getInt("radius"));
 
-        for (var e : gson.fromJson(rs.getString("members"), JsonArray.class)) g.addMember(UUID.fromString(e.getAsString()));
-        for (var e : gson.fromJson(rs.getString("deputies"), JsonArray.class)) g.addDeputy(UUID.fromString(e.getAsString()));
+        JsonObject center = obj(rs.getString("center"));
+        if (center == null) {
+            throw new SQLException("guild " + tag + " ma NULL w kolumnie center");
+        }
+        Guild g = new Guild(tag, owner,
+                JsonLoc.world(center), JsonLoc.x(center), JsonLoc.y(center), JsonLoc.z(center),
+                rs.getInt("radius"));
+
+        for (var e : arr(rs.getString("members")))  g.addMember(UUID.fromString(e.getAsString()));
+        for (var e : arr(rs.getString("deputies"))) g.addDeputy(UUID.fromString(e.getAsString()));
+
         List<String> alliesList = new ArrayList<>();
-        for (var e : gson.fromJson(rs.getString("allies"), JsonArray.class)) alliesList.add(e.getAsString());
+        for (var e : arr(rs.getString("allies"))) alliesList.add(e.getAsString());
         g.loadAllies(alliesList);
 
         String home = rs.getString("home");
         if (home != null) {
-            JsonObject h = gson.fromJson(home, JsonObject.class);
-            g.loadHome(JsonLoc.world(h), JsonLoc.x(h), JsonLoc.y(h), JsonLoc.z(h));
+            JsonObject h = obj(home);
+            if (h != null) g.loadHome(JsonLoc.world(h), JsonLoc.x(h), JsonLoc.y(h), JsonLoc.z(h));
         }
+
         String raid = rs.getString("raid_base");
         if (raid != null) {
-            JsonObject r = gson.fromJson(raid, JsonObject.class);
-            g.loadRaidBase(JsonLoc.world(r), JsonLoc.x(r), JsonLoc.y(r), JsonLoc.z(r), rs.getLong("raid_base_exp"), null);
+            JsonObject r = obj(raid);
+            if (r != null) {
+                g.loadRaidBase(JsonLoc.world(r), JsonLoc.x(r), JsonLoc.y(r), JsonLoc.z(r),
+                        rs.getLong("raid_base_exp"), null);
+            }
         }
 
-        String egg = rs.getString("egg");
-        if (egg != null) {
-            JsonObject e = gson.fromJson(egg, JsonObject.class);
-            g.loadEgg(e.get("x").getAsDouble(), e.get("y").getAsDouble(), e.get("z").getAsDouble(),
-                    e.get("hp").getAsInt(), e.get("maxHp").getAsInt());
-        }
+        // ── EGG: tylko HP + flaga, pozycja = center (stare JSON-y z x/y/z połknie bez błędu) ──
+        g.deserializeEgg(rs.getString("egg"));
+
         g.setRankPoints(rs.getInt("rank_points"));
 
-        // ── NOWE POLA RATING SYSTEM ──────────────────────────────────────
+        // ── RATING SYSTEM: dwie kolumny INT, zgodne z upsert() ──
         g.setAdminRatingSum(rs.getInt("admin_rating_sum"));
         g.setRatedGuildTag(rs.getString("rated_guild_tag"));
         g.deserializePlayerVotes(rs.getString("player_votes"));
-        g.deserializeReceivedRatings(rs.getString("received_player_ratings"));
+        g.setReceivedPlayerRatingSum(rs.getInt("received_player_rating_sum"));
+        g.setReceivedPlayerRatingCount(rs.getInt("received_player_rating_count"));
 
         return g;
     }
 
+    // ═══════════════════════ UPSERT ═══════════════════════
+
     public void upsert(Guild g) {
-        // POPRAWKA: Dodano jeden ? więcej (teraz jest 19 placeholderów dla 19 pól)
         String sql = "INSERT INTO guilds (tag, owner_uuid, deputies, members, allies, center, radius,"
-                + " home, raid_base, raid_base_exp, egg, rank_points, admin_rating_sum, rated_guild_tag, player_votes,"
-                + " received_player_rating_sum, received_player_rating_count, created_at, updated_at)"
+                + " home, raid_base, raid_base_exp, egg, rank_points, admin_rating_sum, rated_guild_tag,"
+                + " player_votes, received_player_rating_sum, received_player_rating_count,"
+                + " created_at, updated_at)"
                 + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 + " ON DUPLICATE KEY UPDATE"
                 + " owner_uuid=VALUES(owner_uuid), deputies=VALUES(deputies), members=VALUES(members),"
                 + " allies=VALUES(allies), center=VALUES(center), radius=VALUES(radius),"
                 + " home=VALUES(home), raid_base=VALUES(raid_base), raid_base_exp=VALUES(raid_base_exp),"
-                + " egg=VALUES(egg), rank_points=VALUES(rank_points), admin_rating_sum=VALUES(admin_rating_sum),"
-                + " rated_guild_tag=VALUES(rated_guild_tag), player_votes=VALUES(player_votes),"
+                + " egg=VALUES(egg), rank_points=VALUES(rank_points),"
+                + " admin_rating_sum=VALUES(admin_rating_sum), rated_guild_tag=VALUES(rated_guild_tag),"
+                + " player_votes=VALUES(player_votes),"
                 + " received_player_rating_sum=VALUES(received_player_rating_sum),"
-                + " received_player_rating_count=VALUES(received_player_rating_count), updated_at=VALUES(updated_at)";
+                + " received_player_rating_count=VALUES(received_player_rating_count),"
+                + " updated_at=VALUES(updated_at)";
 
         JsonObject center = JsonLoc.of(g.getWorldName(), g.getX(), g.getY(), g.getZ());
-        JsonArray members = new JsonArray(); g.getMembers().forEach(u -> members.add(u.toString()));
+        JsonArray members = new JsonArray();  g.getMembers().forEach(u -> members.add(u.toString()));
         JsonArray deputies = new JsonArray(); g.getDeputies().forEach(u -> deputies.add(u.toString()));
-        JsonArray allies = new JsonArray(); g.getAllies().forEach(allies::add);
+        JsonArray allies = new JsonArray();   g.getAllies().forEach(allies::add);
 
-        JsonObject home = g.hasHome() ? JsonLoc.of(g.getHomeWorld(), g.getHomeX(), g.getHomeY(), g.getHomeZ()) : null;
-        JsonObject raid = g.getRaidWorld() != null ? JsonLoc.of(g.getRaidWorld(), g.getRaidX(), g.getRaidY(), g.getRaidZ()) : null;
-        JsonObject egg = null;
-        if (g.hasEgg()) {
-            egg = new JsonObject();
-            egg.addProperty("x", g.getEggX()); egg.addProperty("y", g.getEggY()); egg.addProperty("z", g.getEggZ());
-            egg.addProperty("hp", g.getEggHp()); egg.addProperty("maxHp", g.getMaxEggHp());
-        }
+        JsonObject home = g.hasHome()
+                ? JsonLoc.of(g.getHomeWorld(), g.getHomeX(), g.getHomeY(), g.getHomeZ())
+                : null;
+        JsonObject raid = g.getRaidWorld() != null
+                ? JsonLoc.of(g.getRaidWorld(), g.getRaidX(), g.getRaidY(), g.getRaidZ())
+                : null;
 
         long now = System.currentTimeMillis();
         try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, g.getTag());
-            ps.setString(2, g.getOwner().toString());
-            ps.setString(3, gson.toJson(deputies));
-            ps.setString(4, gson.toJson(members));
-            ps.setString(5, gson.toJson(allies));
-            ps.setString(6, gson.toJson(center));
-            ps.setInt(7, g.getRadius());
-            ps.setString(8, home != null ? gson.toJson(home) : null);
-            ps.setString(9, raid != null ? gson.toJson(raid) : null);
-            ps.setLong(10, Math.max(0, g.getRaidExpiresAt()));
-            ps.setString(11, egg != null ? gson.toJson(egg) : null);
-            ps.setInt(12, g.getRankPoints());
-            ps.setInt(13, g.getAdminRatingSum());
+            ps.setString(1,  g.getTag());
+            ps.setString(2,  g.getOwner().toString());
+            ps.setString(3,  gson.toJson(deputies));
+            ps.setString(4,  gson.toJson(members));
+            ps.setString(5,  gson.toJson(allies));
+            ps.setString(6,  gson.toJson(center));
+            ps.setInt(7,     g.getRadius());
+            ps.setString(8,  home != null ? gson.toJson(home) : null);
+            ps.setString(9,  raid != null ? gson.toJson(raid) : null);
+            ps.setLong(10,   Math.max(0, g.getRaidExpiresAt()));
+            ps.setString(11, g.serializeEgg());          // zawsze non-null: {"hp":..,"maxHp":..,"alive":..}
+            ps.setInt(12,    g.getRankPoints());
+            ps.setInt(13,    g.getAdminRatingSum());
             ps.setString(14, g.getRatedGuildTag());
             ps.setString(15, g.serializePlayerVotes());
-            ps.setInt(16, g.getReceivedPlayerRatingSum());
-            ps.setInt(17, g.getReceivedPlayerRatingCount());
-            ps.setLong(18, now);
-            ps.setLong(19, now);
+            ps.setInt(16,    g.getReceivedPlayerRatingSum());
+            ps.setInt(17,    g.getReceivedPlayerRatingCount());
+            ps.setLong(18,   now);
+            ps.setLong(19,   now);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("guilds upsert failed: " + g.getTag(), e);
         }
     }
 
+    // ═══════════════════════ DELETE ═══════════════════════
+
     public void delete(String tag) {
-        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement("DELETE FROM guilds WHERE tag=?")) {
+        try (Connection c = db.getConnection();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM guilds WHERE tag=?")) {
             ps.setString(1, tag);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("guilds delete failed: " + tag, e);
         }
     }
+
+    // ═══════════════════════ REGEN ═══════════════════════
 
     public String loadRegenJson(String tag) {
         try (Connection c = db.getConnection();
@@ -152,7 +171,8 @@ public class GuildRepository {
     public void saveRegenJson(String tag, String json) {
         try (Connection c = db.getConnection();
              PreparedStatement ps = c.prepareStatement("UPDATE guilds SET regen_blocks=? WHERE tag=?")) {
-            ps.setString(1, json); ps.setString(2, tag); ps.executeUpdate();
+            ps.setString(1, json); ps.setString(2, tag);
+            ps.executeUpdate();
         } catch (SQLException e) { throw new IllegalStateException("regen save failed", e); }
     }
 
@@ -166,6 +186,8 @@ public class GuildRepository {
         return out;
     }
 
+    // ═══════════════════════ WARS ═══════════════════════
+
     public String loadWarsJson(String tag) {
         try (Connection c = db.getConnection();
              PreparedStatement ps = c.prepareStatement("SELECT wars FROM guilds WHERE tag=?")) {
@@ -178,7 +200,8 @@ public class GuildRepository {
     public void saveWarsJson(String tag, String json) {
         try (Connection c = db.getConnection();
              PreparedStatement ps = c.prepareStatement("UPDATE guilds SET wars=? WHERE tag=?")) {
-            ps.setString(1, json); ps.setString(2, tag); ps.executeUpdate();
+            ps.setString(1, json); ps.setString(2, tag);
+            ps.executeUpdate();
         } catch (SQLException e) { throw new IllegalStateException("wars save failed", e); }
     }
 
@@ -192,7 +215,8 @@ public class GuildRepository {
         return out;
     }
 
-    // ── Dispensery na niczyim terenie ──────────────────────────────────────
+    // ═══════════════════════ DISPENSERS ═══════════════════════
+
     public void saveDispenserClaim(String world, int x, int y, int z, String ownerTag) {
         String sql = "INSERT INTO placed_dispensers (world, x, y, z, owner_tag) VALUES (?,?,?,?,?)"
                 + " ON DUPLICATE KEY UPDATE owner_tag=VALUES(owner_tag)";
@@ -204,7 +228,8 @@ public class GuildRepository {
 
     public String getDispenserClaim(String world, int x, int y, int z) {
         try (Connection c = db.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT owner_tag FROM placed_dispensers WHERE world=? AND x=? AND y=? AND z=?")) {
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT owner_tag FROM placed_dispensers WHERE world=? AND x=? AND y=? AND z=?")) {
             ps.setString(1, world); ps.setInt(2, x); ps.setInt(3, y); ps.setInt(4, z);
             try (ResultSet rs = ps.executeQuery()) { if (rs.next()) return rs.getString(1); }
         } catch (SQLException ignored) { }
@@ -213,9 +238,26 @@ public class GuildRepository {
 
     public void removeDispenserClaim(String world, int x, int y, int z) {
         try (Connection c = db.getConnection();
-             PreparedStatement ps = c.prepareStatement("DELETE FROM placed_dispensers WHERE world=? AND x=? AND y=? AND z=?")) {
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM placed_dispensers WHERE world=? AND x=? AND y=? AND z=?")) {
             ps.setString(1, world); ps.setInt(2, x); ps.setInt(3, y); ps.setInt(4, z);
             ps.executeUpdate();
         } catch (SQLException ignored) { }
+    }
+
+    // ═══════════════════════ HELPY JSON (odporne na NULL) ═══════════════════════
+
+    private static JsonObject obj(String json) {
+        if (json == null || json.isBlank()) return null;
+        try { return gson.fromJson(json, JsonObject.class); }
+        catch (Exception e) { return null; }
+    }
+
+    private static JsonArray arr(String json) {
+        if (json == null || json.isBlank()) return new JsonArray();
+        try {
+            JsonArray a = gson.fromJson(json, JsonArray.class);
+            return a != null ? a : new JsonArray();
+        } catch (Exception e) { return new JsonArray(); }
     }
 }

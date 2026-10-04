@@ -37,6 +37,10 @@
       <url>https://jitpack.io</url>
     </repository>
     <repository>
+      <id>modrinth</id>
+      <url>https://api.modrinth.com/maven</url>
+    </repository>
+    <repository>
       <id>papermc</id>
       <url>https://repo.papermc.io/repository/maven-public/</url>
     </repository>
@@ -45,7 +49,13 @@
     <dependency>
       <groupId>io.papermc.paper</groupId>
       <artifactId>paper-api</artifactId>
-      <version>1.21.4-R0.1-SNAPSHOT</version>
+      <version>1.21.11-R0.1-SNAPSHOT</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>maven.modrinth</groupId>
+      <artifactId>dialogdsl</artifactId>
+      <version>2.1.1</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>

@@ -17,7 +17,7 @@ import pl.dzoku.sectorsystem.transfer.CleanupService;
 import pl.dzoku.sectorsystem.transfer.PlayerStateSerializer;
 import pl.dzoku.sectorsystem.transfer.TransferStateMachine;
 import pl.gildie.GildieModule;
-import pl.gildie.commands.GCommand;
+import pl.gildie.commands.GuildCommand;
 import pl.gildie.commands.TntCommand;
 import pl.gildie.listeners.*;
 import pl.gildie.managers.CowStackManager;
@@ -150,9 +150,9 @@ public final class SectorSystemPlugin extends JavaPlugin {
         gildieModule.enable();
 
         TerritoryBarManager bar = gildieModule.getTerritoryBarManager();
-        GCommand gCommand = new GCommand(gildieModule, gildieModule.getGuildManager(), gildieModule.getRegenManager(), bar, gildieModule.getRatingManager(), gildieModule.getModularScoreboardManager());
-        getCommand("g").setExecutor(gCommand);
-        getCommand("g").setTabCompleter(gCommand);
+        GuildCommand guildCommand = new GuildCommand(gildieModule, gildieModule.getGuildManager(), gildieModule.getRegenManager(), bar, gildieModule.getRatingManager(), gildieModule.getModularScoreboardManager());
+        getCommand("g").setExecutor(guildCommand);
+        getCommand("g").setTabCompleter(guildCommand);
         getCommand("tnt").setExecutor(new TntCommand());
 
         getServer().getPluginManager().registerEvents(new ProtectionListener(gildieModule.getGuildManager(),
@@ -161,15 +161,15 @@ public final class SectorSystemPlugin extends JavaPlugin {
                 gildieModule.getRegenManager(), gildieModule.getBuildLockManager(), gildieModule.getWarManager()), this);
         getServer().getPluginManager().registerEvents(new TerritoryListener(bar, gildieModule.getRegenManager()), this);
         getServer().getPluginManager().registerEvents(new InventoryListener(gildieModule.getDigManager()), this);
-        getServer().getPluginManager().registerEvents(new InviteWandListener(gildieModule, gCommand), this);
+        getServer().getPluginManager().registerEvents(new InviteWandListener(gildieModule, guildCommand), this);
         getServer().getPluginManager().registerEvents(new PeriscopeListener(gildieModule.getPeriscopeManager()), this);
         getServer().getPluginManager().registerEvents(new WarListener(gildieModule.getGuildManager(), gildieModule.getWarManager()), this);
         getServer().getPluginManager().registerEvents(new UserSyncListener(gildieModule), this);
         getServer().getPluginManager().registerEvents(new SectorBridgeListener(gildieModule, gildieModule.getGuildManager()), this);
         getServer().getPluginManager().registerEvents(new CowStackListener(this, stackManager), this);
+        getServer().getPluginManager().registerEvents(new GuildDialogListener(guildCommand), this);
         new UserResyncTask(gildieModule).start();
         new SugarcaneTask().runTaskTimer(this, 600L, 600L);
-        stackManager.startCleanupTask();
 
         // ── MODUŁY UI ────────────────────────────────────────────────────
         new pl.dzoku.sectorsystem.chat.GlobalChatHandler(this);
@@ -191,9 +191,6 @@ public final class SectorSystemPlugin extends JavaPlugin {
         // ── pkt 3: CLEAR END CRYSTALS PRZED wyłączeniem modułu gildii ───
         if (gildieModule != null && gildieModule.getMonumentManager() != null) {
             gildieModule.getMonumentManager().shutdown();
-        }
-        if (stackManager != null) {
-            stackManager.removeAllStacks();
         }
         // ──────────────────────────────────────────────────────────────────
 

@@ -9,15 +9,15 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import pl.gildie.GildieModule;
-import pl.gildie.commands.GCommand;
+import pl.gildie.commands.GuildCommand;
 
 public class InviteWandListener implements Listener {
     private final GildieModule module;
-    private final GCommand gCommand;
+    private final GuildCommand guildCommand;
 
-    public InviteWandListener(GildieModule module, GCommand gCommand) {
+    public InviteWandListener(GildieModule module, GuildCommand guildCommand) {
         this.module = module;
-        this.gCommand = gCommand;
+        this.guildCommand = guildCommand;
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -28,7 +28,7 @@ public class InviteWandListener implements Listener {
         ItemStack item = player.getInventory().getItemInMainHand();
         if (item == null || !item.hasItemMeta()) return;
         ItemMeta meta = item.getItemMeta();
-        if (meta == null || !meta.hasDisplayName() || !GCommand.WAND_NAME.equals(meta.getDisplayName())) return;
+        if (meta == null || !meta.hasDisplayName() || !GuildCommand.WAND_NAME.equals(meta.getDisplayName())) return;
         event.setCancelled(true);
         Long exp = module.getInviteWandUsers().get(player.getUniqueId());
         if (exp == null || System.currentTimeMillis() > exp) {
@@ -38,6 +38,6 @@ public class InviteWandListener implements Listener {
             return;
         }
         if (target.getUniqueId().equals(player.getUniqueId())) return;
-        gCommand.inviteFromWand(player, target);
+        guildCommand.inviteFromWand(player, target);
     }
 }

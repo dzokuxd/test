@@ -78,6 +78,40 @@ public class ProtectionListener implements Listener {
         Block b = event.getBlock();
         Player player = event.getPlayer();
         ItemStack hand = player.getInventory().getItemInMainHand();
+
+        // ── DROP WHEAT: działa ZAWSZE gdy motyka + trawa (niezależnie od terenu) ──
+        if (isGrass(b) && isHoe(hand.getType())) {
+            // Dla TALL_GRASS tylko dolna część dropi
+            if (b.getType() == Material.TALL_GRASS) {
+                BlockData data = b.getBlockData();
+                if (data instanceof Bisected bisected) {
+                    if (bisected.getHalf() == Bisected.Half.TOP) {
+                        return;
+                    }
+                }
+            }
+
+            // Anuluj vanilla drop i dropnij wheat
+            event.setDropItems(false);
+
+            int fortuneLevel = hand.getEnchantmentLevel(Enchantment.FORTUNE);
+            int wheatAmount = 1 + random.nextInt(fortuneLevel + 1);
+
+            b.getWorld().dropItemNaturally(
+                    b.getLocation(),
+                    new ItemStack(Material.WHEAT, wheatAmount)
+            );
+
+            if (random.nextBoolean()) {
+                int seedsAmount = 1 + random.nextInt(fortuneLevel + 1);
+                b.getWorld().dropItemNaturally(
+                        b.getLocation(),
+                        new ItemStack(Material.WHEAT_SEEDS, seedsAmount)
+                );
+            }
+        }
+
+        // ── OCHRONA RAID BASE ──
         Guild raid = guildManager.getRaidBaseOwnerAt(b.getLocation());
         if (raid != null) {
             event.setCancelled(true);
@@ -85,6 +119,7 @@ public class ProtectionListener implements Listener {
             return;
         }
 
+        // ── POZA TERENEM GILDII ──
         Guild guild = guildManager.getGuildAt(b.getLocation());
         if (guild == null) {
             if (b.getType() == Material.DISPENSER) {
@@ -94,14 +129,13 @@ public class ProtectionListener implements Listener {
                 if (owner != null && owner.equals(breakerTag)) {
                     repo.removeDispenserClaim(b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
                     dispenserHits.remove(key(b));
-                    return; // wlasciciel niszczy od razu
+                    return;
                 }
                 String k = key(b);
                 int hits = dispenserHits.merge(k, 1, Integer::sum);
                 if (hits < Const.DISPENSER_HITS_REQUIRED) {
                     event.setCancelled(true);
-                    event.getPlayer().sendMessage("§cTen dispenser nalezy do innej gildii! Uderzen pozostalo: §e"
-                            + (Const.DISPENSER_HITS_REQUIRED - hits));
+                    sendDispenserTitle(event.getPlayer(), hits, Const.DISPENSER_HITS_REQUIRED);
                     return;
                 }
                 dispenserHits.remove(k);
@@ -109,6 +143,8 @@ public class ProtectionListener implements Listener {
             }
             return;
         }
+
+        // ── NA TERENIE GILDII ──
         if (guild.isEggBlock(b.getLocation())) {
             event.setCancelled(true);
             return;
@@ -117,39 +153,16 @@ public class ProtectionListener implements Listener {
             event.setCancelled(true);
             event.getPlayer().sendMessage("§cNie mozesz niszczyć na terenie gildii §e" + guild.getTag() + "§c!");
         }
-        if (b.getType() != Material.GRASS_BLOCK &&
-                b.getType() != Material.TALL_GRASS) {
-            return;
-        }
-
-        if (b.getType() == Material.TALL_GRASS) {
-            BlockData data = b.getBlockData();
-            if (data instanceof Bisected bisected) {
-                if (bisected.getHalf() == Bisected.Half.TOP) {
-                    return;
-                }
-            }
-        }
-
-        if (!isHoe(hand.getType())) return;
-
-        event.setDropItems(false);
-
-        int fortuneLevel = hand.getEnchantmentLevel(Enchantment.FORTUNE);
-        int wheatAmount = 1 + random.nextInt(fortuneLevel + 1);
-
-        b.getWorld().dropItemNaturally(
-                b.getLocation(),
-                new ItemStack(Material.WHEAT, wheatAmount)
+    }
+    private void sendDispenserTitle(Player player, int current, int required) {
+        player.sendTitle(
+                "",
+                "§7(§F" + current + "§7/§c" + required+"§7)",
+                5, 40, 10
         );
-
-        if (random.nextBoolean()) {
-            int seedsAmount = 1 + random.nextInt(fortuneLevel + 1);
-            b.getWorld().dropItemNaturally(
-                    b.getLocation(),
-                    new ItemStack(Material.WHEAT_SEEDS, seedsAmount)
-            );
-        }
+    }
+    private boolean isGrass(Block b) {
+        return b.getType() == Material.SHORT_GRASS || b.getType() == Material.TALL_GRASS;
     }
     private boolean isHoe(Material m) {
         return m == Material.WOODEN_HOE ||

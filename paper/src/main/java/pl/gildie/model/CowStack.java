@@ -1,152 +1,76 @@
 package pl.gildie.model;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Cow;
-import org.bukkit.entity.Entity;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
-/**
- * Reprezentuje jeden stack krow
- */
 public class CowStack {
 
-    private final UUID stackId;
-    private final Location location;
-    private final List<UUID> cowUUIDs;
-    private ArmorStand hologram;
+    private final UUID repUUID;
     private int count;
+    private ArmorStand hologram;
+    private static final double HOLO_OFFSET = 1.2;
 
-    public CowStack(Location location) {
-        this.stackId = UUID.randomUUID();
-        this.location = location;
-        this.cowUUIDs = new ArrayList<>();
-        this.count = 0;
+    public CowStack(Cow rep) {
+        this.repUUID = rep.getUniqueId();
+        this.count = 1;
     }
 
-    public UUID getStackId() {
-        return stackId;
-    }
+    public UUID getRepUUID() { return repUUID; }
+    public int getCount() { return count; }
+    public boolean isRep(UUID id) { return repUUID.equals(id); }
 
-    public Location getLocation() {
-        return location;
-    }
+    public Cow getRep() { return (Cow) Bukkit.getEntity(repUUID); }
 
-    public int getCount() {
-        return count;
-    }
-
-    public List<UUID> getCowUUIDs() {
-        return cowUUIDs;
-    }
-
-    /**
-     * Dodaje krowe do stacka
-     */
-    public void addCow(Cow cow) {
-        cowUUIDs.add(cow.getUniqueId());
-        count++;
+    public void addCount(int n) {
+        count += n;
         updateHologram();
     }
 
-    /**
-     * Usuwa krowe ze stacka
-     */
-    public void removeCow(UUID cowUUID) {
-        cowUUIDs.remove(cowUUID);
-        count--;
-        if (count < 0) count = 0;
-        updateHologram();
-    }
-
-    /**
-     * Zwiększa licznik (np. po rozmnozeniu)
-     */
-    public void incrementCount() {
-        count++;
-        updateHologram();
-    }
-
-    /**
-     * Sprawdza czy stack jest pusty
-     */
-    public boolean isEmpty() {
-        return count <= 0;
-    }
-
-    /**
-     * Sprawdza czy krowa nalezy do tego stacka
-     */
-    public boolean containsCow(UUID cowUUID) {
-        return cowUUIDs.contains(cowUUID);
-    }
-
-    /**
-     * Tworzy lub aktualizuje hologram z licznikiem
-     */
     public void updateHologram() {
+        Cow rep = getRep();
+        if (rep == null || rep.isDead() || count <= 1) { removeHologram(); return; }
+
         if (hologram == null || hologram.isDead()) {
-            spawnHologram();
+            hologram = rep.getWorld().spawn(holoLoc(rep), ArmorStand.class, s -> {
+                s.setInvisible(true);
+                s.setGravity(false);
+                s.setSmall(true);
+                s.setMarker(true);
+                s.setPersistent(true);
+                s.setInvulnerable(true);
+                s.setSilent(true);
+                s.setCustomNameVisible(true);
+            });
+            if (hologram == null) return;
         }
-
-        if (count <= 1) {
-            // Nie pokazuj hologramu dla 1 krowy
-            if (hologram != null && !hologram.isDead()) {
-                hologram.remove();
-                hologram = null;
-            }
-            return;
-        }
-
-        // Ustaw nazwe hologramu
+        hologram.teleport(holoLoc(rep));
         hologram.setCustomName("§6x" + count);
         hologram.setCustomNameVisible(true);
     }
 
-    /**
-     * Spawnuje niewidzialny ArmorStand jako hologram
-     */
-    private void spawnHologram() {
-        Location holoLoc = location.clone().add(0, 1.5, 0);
-        hologram = location.getWorld().spawn(holoLoc, ArmorStand.class, stand -> {
-            stand.setInvisible(true);
-            stand.setGravity(false);
-            stand.setSmall(true);
-            stand.setMarker(true);
-            stand.setPersistent(false);
-            stand.setCustomNameVisible(false);
-            stand.setInvulnerable(true);
-        });
-    }
-
-    /**
-     * Usuwa hologram
-     */
     public void removeHologram() {
-        if (hologram != null && !hologram.isDead()) {
-            hologram.remove();
-            hologram = null;
-        }
+        if (hologram != null && !hologram.isDead()) hologram.remove();
+        hologram = null;
+    }
+    private long breedCooldownUntil = 0;
+
+    public boolean isBreedCooldown() {
+        return System.currentTimeMillis() < breedCooldownUntil;
     }
 
-    /**
-     * Usuwa wszystkie krowy ze stacka i hologram
-     */
-    public void destroy(org.bukkit.Server server) {
-        // Usun krowy
-        for (UUID uuid : cowUUIDs) {
-            Entity entity = server.getEntity(uuid);
-            if (entity != null && !entity.isDead()) {
-                entity.remove();
-            }
-        }
-        cowUUIDs.clear();
-        count = 0;
+    public void startBreedCooldown(long millis) {
+        this.breedCooldownUntil = System.currentTimeMillis() + millis;
+    }
 
-        // Usun hologram
-        removeHologram();
+    /** Pozostały cooldown w sekundach */
+    public long getBreedCooldownSeconds() {
+        return Math.max(0, (breedCooldownUntil - System.currentTimeMillis()) / 1000L);
+    }
+    private Location holoLoc(Cow rep) {
+        return rep.getLocation().add(0.5, HOLO_OFFSET, 0.5);
     }
 }

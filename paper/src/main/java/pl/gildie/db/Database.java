@@ -1,6 +1,5 @@
 package pl.gildie.db;
 
-import pl.gildie.Const;
 import pl.sectorsystem.common.mysql.MySQLService;
 
 import java.sql.Connection;
@@ -12,6 +11,9 @@ import java.util.logging.Logger;
  * Adapter do MySQLService - używa wspólnego connection pool'a
  */
 public class Database {
+
+    private static final Logger LOG = Logger.getLogger("Gildie");
+
     private final MySQLService mysqlService;
     private boolean failed = false;
 
@@ -22,25 +24,30 @@ public class Database {
     public void init() {
         if (mysqlService == null || !mysqlService.isEnabled()) {
             failed = true;
-            Logger.getLogger("Gildie").severe("MySQLService not available");
+            LOG.severe("MySQLService not available");
             return;
         }
 
         try {
             createTables();
             migrate();
-            Logger.getLogger("Gildie").info("Gildie tables initialized");
+            LOG.info("Gildie tables initialized");
         } catch (Exception e) {
             failed = true;
-            Logger.getLogger("Gildie").severe("MySQL init failed: " + e.getMessage());
+            LOG.severe("MySQL init failed: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    public boolean isFailed() { return failed; }
+    public boolean isFailed() {
+        return failed;
+    }
+
+    // ═══════════════════════ TWORZENIE TABEL ═══════════════════════
 
     private void createTables() throws Exception {
         try (Connection c = mysqlService.getConnection(); Statement st = c.createStatement()) {
+
             st.execute("CREATE TABLE IF NOT EXISTS guilds ("
                     + " tag VARCHAR(5) PRIMARY KEY,"
                     + " owner_uuid CHAR(36) NOT NULL,"
@@ -58,13 +65,13 @@ public class Database {
                     + " monument_effects JSON NULL,"
                     + " monument_center_captured_date VARCHAR(10) NULL,"
                     + " rank_points INT NOT NULL DEFAULT 1000,"
-                    // ── NOWE KOLUMNY SYSTEMU OCENIANIA (dla nowych instalacji) ──
+                    // ── KOLUMNY SYSTEMU OCENIANIA (dla nowych instalacji) ──
                     + " admin_rating_sum INT NOT NULL DEFAULT 0,"
                     + " rated_guild_tag VARCHAR(10) NULL,"
                     + " player_votes JSON NULL,"
                     + " received_player_rating_sum INT NOT NULL DEFAULT 0,"
                     + " received_player_rating_count INT NOT NULL DEFAULT 0,"
-                    // ─────────────────────────────────────────────────────────────
+                    // ───────────────────────────────────────────────────────
                     + " created_at BIGINT NOT NULL,"
                     + " updated_at BIGINT NOT NULL,"
                     + " INDEX idx_owner (owner_uuid)"
@@ -92,6 +99,7 @@ public class Database {
                     + " guild_tag VARCHAR(16) PRIMARY KEY,"
                     + " effects_json TEXT NOT NULL"
                     + ")");
+
             st.execute("CREATE TABLE IF NOT EXISTS placed_dispensers ("
                     + " world VARCHAR(32) NOT NULL,"
                     + " x INT NOT NULL, y INT NOT NULL, z INT NOT NULL,"
@@ -101,33 +109,49 @@ public class Database {
         }
     }
 
+    // ═══════════════════════ MIGRACJE ═══════════════════════
+
     private void migrate() throws Exception {
         try (Connection c = mysqlService.getConnection(); Statement st = c.createStatement()) {
-            // Istniejące migracje
-            st.execute("ALTER TABLE guilds MODIFY regen_blocks JSON NULL");
-            st.execute("ALTER TABLE guilds MODIFY wars JSON NULL");
-            st.execute("ALTER TABLE guilds ADD COLUMN monument_effects JSON NULL");
-            st.execute("ALTER TABLE guilds ADD COLUMN monument_center_captured_date VARCHAR(10) NULL");
-            st.execute("ALTER TABLE guilds ADD COLUMN rank_points INT NOT NULL DEFAULT 1000");
-            st.execute("ALTER TABLE users ADD COLUMN monument_points INT NOT NULL DEFAULT 0");
 
-            // ── NOWE MIGRACJE SYSTEMU OCENIANIA (dla istniejących instalacji) ──
-            // Ignorujemy błędy, jeśli kolumny już istnieją (SQLState 42S21)
-            try { st.execute("ALTER TABLE guilds ADD COLUMN admin_rating_sum INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
-            try { st.execute("ALTER TABLE guilds ADD COLUMN rated_guild_tag VARCHAR(10) NULL"); } catch (Exception ignored) {}
-            try { st.execute("ALTER TABLE guilds ADD COLUMN player_votes JSON NULL"); } catch (Exception ignored) {}
-            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_rating_sum INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
-            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_rating_count INT NOT NULL DEFAULT 0"); } catch (Exception ignored) {}
-            try { st.execute("ALTER TABLE guilds ADD COLUMN received_player_ratings JSON NULL"); } catch (Exception ignored) {}
-            // ─────────────────────────────────────────────────────────────────────
+            // ── Stare migracje (teraz każda osobno zabezpieczona) ──
+            safe(st, "ALTER TABLE guilds MODIFY regen_blocks JSON NULL");
+            safe(st, "ALTER TABLE guilds MODIFY wars JSON NULL");
+            safe(st, "ALTER TABLE guilds ADD COLUMN monument_effects JSON NULL");
+            safe(st, "ALTER TABLE guilds ADD COLUMN monument_center_captured_date VARCHAR(10) NULL");
+            safe(st, "ALTER TABLE guilds ADD COLUMN rank_points INT NOT NULL DEFAULT 1000");
+            safe(st, "ALTER TABLE users ADD COLUMN monument_points INT NOT NULL DEFAULT 0");
 
-        } catch (Exception e) {
-            // Logujemy tylko krytyczne błędy, ignorujemy te o "Duplicate column name"
-            if (!e.getMessage().contains("Duplicate column name")) {
-                throw e;
+            // ── Migracje systemu oceniania ──
+            safe(st, "ALTER TABLE guilds ADD COLUMN admin_rating_sum INT NOT NULL DEFAULT 0");
+            safe(st, "ALTER TABLE guilds ADD COLUMN rated_guild_tag VARCHAR(10) NULL");
+            safe(st, "ALTER TABLE guilds ADD COLUMN player_votes JSON NULL");
+            safe(st, "ALTER TABLE guilds ADD COLUMN received_player_rating_sum INT NOT NULL DEFAULT 0");
+            safe(st, "ALTER TABLE guilds ADD COLUMN received_player_rating_count INT NOT NULL DEFAULT 0");
+
+            // ── Uzupełnij NULL-e w egg domyślnym HP (idempotentne) ──
+            safe(st, "UPDATE guilds SET egg = '{\"hp\":500,\"maxHp\":500,\"alive\":true}' WHERE egg IS NULL");
+        }
+    }
+
+    /**
+     * Wykonuje migrację idempotentną: jeśli kolumna już istnieje
+     * ("Duplicate column name"), po prostu ją pomijamy i idziemy dalej.
+     * Dzięki temu JEDEN błąd nie ucina całej reszty migracji.
+     */
+    private void safe(Statement st, String sql) {
+        try {
+            st.execute(sql);
+        } catch (SQLException e) {
+            if (e.getMessage() != null && e.getMessage().contains("Duplicate column name")) {
+                LOG.fine("Migracja pominięta (kolumna już istnieje): " + sql);
+            } else {
+                LOG.warning("Migracja pominięta: " + e.getMessage() + " | SQL: " + sql);
             }
         }
     }
+
+    // ═══════════════════════ POŁĄCZENIA ═══════════════════════
 
     public Connection getConnection() throws SQLException {
         if (mysqlService == null || !mysqlService.isEnabled()) {
@@ -141,6 +165,6 @@ public class Database {
     }
 
     public void close() {
-        // MySQLService is managed by SectorSystemPlugin, not here
+        // MySQLService jest zarządzany przez SectorSystemPlugin, nie tutaj
     }
 }

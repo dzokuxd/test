@@ -29,10 +29,6 @@ public class MonumentEggListener implements Listener {
     public void onEggInteract(PlayerInteractEvent e) {
         Player p = e.getPlayer();
         Guild g = guildManager.getGuildByPlayer(p.getUniqueId());
-        if (g != null && !g.hasEgg()) {
-            p.sendMessage("§c[DEBUG] Gildia nie ma ustawionej pozycji jajka!");
-            p.sendMessage("§7Pozycja jajka w bazie: " + g.getEggX() + ", " + g.getEggY() + ", " + g.getEggZ());
-        }
         // Tylko kliknięcia na bloki
         if (e.getAction() != Action.LEFT_CLICK_BLOCK && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (e.getClickedBlock() == null) return;
