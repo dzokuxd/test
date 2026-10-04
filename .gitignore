@@ -1,0 +1,16 @@
+
+# Environment
+.env
+*.env
+
+# Maven
+target/
+
+# Java
+*.class
+
+# Logs
+logs/
+
+# PIDs
+pids/
