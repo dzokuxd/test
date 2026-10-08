@@ -83,9 +83,8 @@ public class MySQLService implements AutoCloseable {
             st.executeUpdate("CREATE TABLE IF NOT EXISTS auth_players (uuid VARCHAR(36) PRIMARY KEY, username VARCHAR(32) NOT NULL, premium TINYINT(1) NOT NULL DEFAULT 0, password VARCHAR(255) NOT NULL DEFAULT '', registered TINYINT(1) NOT NULL DEFAULT 0, firstIP VARCHAR(64) NOT NULL, lastIP VARCHAR(64) NOT NULL, rememberIP VARCHAR(64) NOT NULL DEFAULT '') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             st.executeUpdate("CREATE TABLE IF NOT EXISTS auth_whitelist (username VARCHAR(32) PRIMARY KEY, added_at BIGINT DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             st.executeUpdate("CREATE TABLE IF NOT EXISTS sector_players (uuid VARCHAR(36) PRIMARY KEY, username VARCHAR(16) NOT NULL, current_sector VARCHAR(64), last_sector VARCHAR(64), first_join BIGINT, last_join BIGINT, playtime_seconds BIGINT DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-            // NOWE TABELE: sloty i konfiguracja (używamy `config_key` zamiast zastrzeżonego 'key')
             st.executeUpdate("CREATE TABLE IF NOT EXISTS sector_slots (sector VARCHAR(32) PRIMARY KEY, max_slots INT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS server_config (`config_key` VARCHAR(64) PRIMARY KEY, `config_value` TEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             st.executeUpdate("CREATE TABLE IF NOT EXISTS server_config (`config_key` VARCHAR(64) PRIMARY KEY, `config_value` TEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
             System.out.println("[MySQL] Tabele utworzone/zweryfikowane");
