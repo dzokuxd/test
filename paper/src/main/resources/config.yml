@@ -9,10 +9,8 @@ redis:
   port: 6379
   password: ""
   database: 0
-
 nats:
   url: "nats://localhost:4222"
-
 mysql:
   enabled: true
   host: "mysql.titanaxe.com"
@@ -20,6 +18,27 @@ mysql:
   database: "srv325281"
   username: "srv325281"
   password: "Vaw4wCB4"
+discord:
+  enabled: true
+  bot-token: "TWÓJ_TOKEN_BOTA"
+  guild-id: 000000000000000000
+  channels:
+    verify: 000000000000000000
+    proposals: 000000000000000000
+    tickets-category: 000000000000000000
+  roles:
+    verified: 000000000000000000
+    leader: 000000000000000000
+    staff: 000000000000000000
+    banned: 000000000000000000
+  verification:
+    code-expire-minutes: 5
+    code-length: 6
+  guilds:
+    leader-member-requirement: 1
+  proposals:
+    vote-threshold: 10
+    approval-percentage: 50
 
 # ← TO BRAKOWAŁO! Dodaj tę sekcję:
 sectors:

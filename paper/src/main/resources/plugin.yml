@@ -7,6 +7,10 @@ authors:
   - dzokuxd
 
 commands:
+  discord:
+    description: Generuje kod weryfikacyjny do połączenia konta Minecraft z Discord
+    usage: /discord
+    aliases: [ verify, weryfikacja ]
   sector:
     description: Sector management and transfers
     permission: sectorsystem.use

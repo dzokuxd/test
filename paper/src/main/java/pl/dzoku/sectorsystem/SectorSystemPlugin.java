@@ -48,6 +48,8 @@ public final class SectorSystemPlugin extends JavaPlugin {
     private BukkitTask metricsReportTask;
     private BukkitTask heartbeatTask;
     private CowStackManager stackManager;
+    private pl.discord.DiscordManager discordManager;
+    private pl.discord.DiscordDatabase discordDatabase;
 
     @Override
     public void onEnable() {
@@ -178,6 +180,19 @@ public final class SectorSystemPlugin extends JavaPlugin {
         if (getConfig().getBoolean("world-sync.enabled", true)) {
             new WorldSyncManager(this);
         }
+        // === MODUŁ DISCORD ===
+        if (getCommand("discord") != null) {
+            getCommand("discord").setExecutor(new pl.discord.DiscordCommand(this));
+        }
+        if (getConfig().getBoolean("discord.enabled", false)) {
+            this.discordDatabase = new pl.discord.DiscordDatabase(this);
+            this.discordManager = new pl.discord.DiscordManager(this);
+            if (this.discordManager.getJda() != null) {
+                this.discordManager.getJda().addEventListener(new pl.discord.DiscordCommands(this));
+            }
+        }
+        this.discordManager.startBot();
+        getServer().getPluginManager().registerEvents(new pl.discord.GuildLeaderRoleListener(this), this);
 
         //this.scoreboard = new pl.dzoku.sectorsystem.scoreboard.SectorScoreboard(this);
         this.tablist = new pl.dzoku.sectorsystem.tablist.SectorTablist(this);
@@ -188,6 +203,12 @@ public final class SectorSystemPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (this.discordManager != null) {
+            this.discordManager.shutdown();
+        }
+        if (this.discordDatabase != null) {
+            this.discordDatabase.close();
+        }
         // ── pkt 3: CLEAR END CRYSTALS PRZED wyłączeniem modułu gildii ───
         if (gildieModule != null && gildieModule.getMonumentManager() != null) {
             gildieModule.getMonumentManager().shutdown();
@@ -226,4 +247,8 @@ public final class SectorSystemPlugin extends JavaPlugin {
     public String getCurrentSectorId() { return configManager.getCurrentSector(); }
     public static SectorSystemPlugin getInstance() { return instance; }
     public CowStackManager getStackManager() {return stackManager;}
+    public pl.discord.DiscordManager getDiscordManager() {return discordManager;}
+
+    public pl.discord.DiscordDatabase getDiscordDatabase() {return discordDatabase;}
+
 }
