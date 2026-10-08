@@ -4,7 +4,7 @@ import com.velocitypowered.api.proxy.Player;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import pl.dzoku.sectorsystem.SectorProxyPlugin;
-import pl.dzoku.sectorsystem.config.AuthManager;
+import pl.dzoku.sectorsystem.managers.AuthManager;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;

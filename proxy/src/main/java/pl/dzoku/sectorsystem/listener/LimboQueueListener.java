@@ -6,7 +6,7 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import pl.dzoku.sectorsystem.RestartOrchestrator;
 import pl.dzoku.sectorsystem.SectorProxyPlugin;
-import pl.dzoku.sectorsystem.config.AuthManager;
+import pl.dzoku.sectorsystem.managers.AuthManager;
 
 import java.util.Optional;
 

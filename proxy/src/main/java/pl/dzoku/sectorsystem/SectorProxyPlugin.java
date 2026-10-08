@@ -10,13 +10,15 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import pl.dzoku.sectorsystem.auth.AuthCommand;
+import pl.dzoku.sectorsystem.command.AuthCommand;
 import pl.dzoku.sectorsystem.listener.AuthListener;
-import pl.dzoku.sectorsystem.config.AuthManager;
+import pl.dzoku.sectorsystem.managers.AuthManager;
 import pl.dzoku.sectorsystem.auth.LoginTask;
-import pl.dzoku.sectorsystem.config.ProxyConfigManager;
+import pl.dzoku.sectorsystem.managers.MySQLDiagnostic;
+import pl.dzoku.sectorsystem.managers.ProxyConfigManager;
 import pl.dzoku.sectorsystem.listener.LimboQueueListener;
 import pl.dzoku.sectorsystem.listener.VersionGuardListener;
+import pl.dzoku.sectorsystem.managers.QueueManager;
 import pl.dzoku.sectorsystem.service.HeartbeatService;
 import pl.dzoku.sectorsystem.service.NatsService;
 import pl.dzoku.sectorsystem.service.RedisService;
@@ -111,6 +113,7 @@ public class SectorProxyPlugin {
         this.loginTask.start();
         
         registerAuthCommands();
+
         
         // Rejestracja komendy /auth
 

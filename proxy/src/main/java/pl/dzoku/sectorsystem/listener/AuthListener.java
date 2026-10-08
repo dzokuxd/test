@@ -8,8 +8,8 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import pl.dzoku.sectorsystem.RestartOrchestrator;
 import pl.dzoku.sectorsystem.SectorProxyPlugin;
-import pl.dzoku.sectorsystem.config.AuthManager;
-import pl.dzoku.sectorsystem.config.SkinManager;
+import pl.dzoku.sectorsystem.managers.AuthManager;
+import pl.dzoku.sectorsystem.managers.SkinManager;
 import pl.sectorsystem.common.mysql.MySQLService;
 
 import java.sql.Connection;
