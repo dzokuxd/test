@@ -11,21 +11,26 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import pl.dzoku.sectorsystem.command.AuthCommand;
+import pl.dzoku.sectorsystem.command.BanCommand;
+import pl.dzoku.sectorsystem.command.MuteCommand;
+import pl.dzoku.sectorsystem.command.UnbanCommand;
+import pl.dzoku.sectorsystem.command.UnmuteCommand;
+import pl.dzoku.sectorsystem.discord.*;
 import pl.dzoku.sectorsystem.listener.AuthListener;
-import pl.dzoku.sectorsystem.managers.AuthManager;
-import pl.dzoku.sectorsystem.auth.LoginTask;
-import pl.dzoku.sectorsystem.managers.MySQLDiagnostic;
-import pl.dzoku.sectorsystem.managers.ProxyConfigManager;
 import pl.dzoku.sectorsystem.listener.LimboQueueListener;
 import pl.dzoku.sectorsystem.listener.VersionGuardListener;
+import pl.dzoku.sectorsystem.managers.AuthManager;
+import pl.dzoku.sectorsystem.managers.MySQLDiagnostic;
+import pl.dzoku.sectorsystem.managers.ProxyConfigManager;
 import pl.dzoku.sectorsystem.managers.QueueManager;
+import pl.dzoku.sectorsystem.auth.LoginTask;
 import pl.dzoku.sectorsystem.service.HeartbeatService;
 import pl.dzoku.sectorsystem.service.NatsService;
 import pl.dzoku.sectorsystem.service.RedisService;
 import pl.sectorsystem.common.config.SystemConfig;
-import java.nio.file.Path;
 import pl.sectorsystem.common.mysql.MySQLService;
 
+import java.nio.file.Path;
 import java.util.logging.Logger;
 
 @Plugin(id = "sectorsystem-proxy",
@@ -35,10 +40,9 @@ import java.util.logging.Logger;
 public class SectorProxyPlugin {
 
     private static SectorProxyPlugin instance;
-    
+
     private final ProxyServer server;
     private final Logger logger;
-    
     private RedisService redisService;
     private NatsService natsService;
     private HeartbeatService heartbeatService;
@@ -51,6 +55,8 @@ public class SectorProxyPlugin {
     private SystemConfig config;
     private ProxyConfigManager cfg;
     private LoginTask loginTask;
+    private DiscordManager discordManager;
+    private DiscordDatabase discordDatabase;
 
     @Inject
     public SectorProxyPlugin(ProxyServer server, Logger logger) {
@@ -61,69 +67,85 @@ public class SectorProxyPlugin {
 
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
-        
-        // Utwórz folder danych pluginu
         Path dataDirectory = Path.of(System.getProperty("user.dir"), "plugins", "sectorsystem-proxy");
         try {
             java.nio.file.Files.createDirectories(dataDirectory);
         } catch (Exception e) {
-            logger.info("Nie udało się utworzyć folderu danych: " + e.getMessage());
+            logger.warning("Nie udało się utworzyć folderu danych: " + e.getMessage());
         }
 
-        // Load from config.yml
         this.cfg = new ProxyConfigManager(dataDirectory, logger);
         String redisHost = cfg.getRedisHost();
         int redisPort = cfg.getRedisPort();
         String natsUrl = cfg.getNatsUrl();
         logger.info("Config: Redis=" + redisHost + ":" + redisPort + " NATS=" + natsUrl);
-
         this.config = new SystemConfig();
         this.redisService = new RedisService(redisHost, redisPort, 10);
         this.natsService = new NatsService(natsUrl);
         this.mysqlService = new MySQLService(config.getMysql());
-        
-        // Uruchom diagnostykę MySQL
+
         MySQLDiagnostic.runDiagnostic(config.getMysql());
+
         this.heartbeatService = new HeartbeatService(redisService);
         this.healthChecker = new SectorHealthChecker(server, heartbeatService, logger);
         this.transferRouter = new TransferRouter(server, redisService, natsService, healthChecker, logger, this);
-
         this.orchestrator = new RestartOrchestrator(server, redisService, healthChecker, logger);
         this.orchestrator.start();
-
         this.limboScoreboard = new LimboScoreboard(server, redisService, orchestrator);
         this.limboScoreboard.start();
-        
         this.queueManager = new QueueManager(this);
 
         natsService.subscribe("sector.transfer.request", message -> transferRouter.handleTransferRequest(message));
         natsService.subscribe("sector.restart", message -> orchestrator.handleRestartMessage(message));
 
+        server.getEventManager().register(this, new pl.dzoku.sectorsystem.listener.BanLoginListener(this));
         server.getEventManager().register(this, new VersionGuardListener());
-        getServer().getEventManager().register(this, new LimboQueueListener(this));
+        server.getEventManager().register(this, new LimboQueueListener(this));
         server.getEventManager().register(this, orchestrator);
         server.getEventManager().register(this, new AuthListener(this));
         server.getEventManager().register(this, new pl.dzoku.sectorsystem.listener.ServerListListener(this));
         server.getEventManager().register(this, new pl.dzoku.sectorsystem.listener.WhitelistLoginListener(this));
+        server.getEventManager().register(this, new pl.dzoku.sectorsystem.discord.GuildLeaderRoleListener(this));
 
+        // === DISCORD - INICJALIZACJA ===
+        this.discordDatabase = new DiscordDatabase(this.mysqlService);
+        this.discordManager = new DiscordManager(
+                this,
+                cfg.getDiscordToken(),
+                cfg.getDiscordGuildId(),
+                cfg.getDiscordVerifiedRoleId(),
+                cfg.getDiscordLeaderRoleId(),
+                cfg.getDiscordStaffRoleId()
+        );
+        this.discordManager.startBot();
+
+        if (this.discordManager.getJda() != null) {
+            this.discordManager.getJda().addEventListener(new DiscordCommands(this));
+            // Auto-generacja embedów po 3 sekundach (żeby bot się w pełni załadował)
+            server.getScheduler().buildTask(this, () -> {
+                new DiscordEmbedManager(this).createAllEmbeds();
+            }).delay(java.time.Duration.ofSeconds(3)).schedule();
+        }
         healthChecker.start();
-        
-        // Uruchom task logowania (auto-kick po 60s)
         this.loginTask = new LoginTask(this, 60);
         this.loginTask.start();
-        
+        new pl.dzoku.sectorsystem.managers.ExpiredPunishmentsCleaner(this).start();
         registerAuthCommands();
-
-        
-        // Rejestracja komendy /auth
+        server.getCommandManager().register("discord", new DiscordCommand(this));
 
         logger.info("SectorSystem Proxy v2.2 initialized (Auth + Sectors ready)");
     }
 
     private void registerAuthCommands() {
         var cm = server.getCommandManager();
+
+        // Komendy moderacyjne
+        cm.register("ban", new BanCommand(this.mysqlService, this.server));
+        cm.register("mute", new MuteCommand(this.mysqlService, this.server));
+        cm.register("unban", new UnbanCommand(this.mysqlService));
+        cm.register("unmute", new UnmuteCommand(this.mysqlService));
+
         cm.register("auth", new AuthCommand(this));
-        // /register <hasło>
         cm.register("register", new SimpleCommand() {
             public void execute(Invocation inv) {
                 String[] args = inv.arguments();
@@ -140,7 +162,7 @@ public class SectorProxyPlugin {
                 }
             }
         });
-        
+
         // /login <hasło>
         cm.register("login", new SimpleCommand() {
             public void execute(Invocation inv) {
@@ -158,7 +180,7 @@ public class SectorProxyPlugin {
                 }
             }
         });
-        
+
         // /remember (zapamiętaj IP)
         cm.register("remember", new SimpleCommand() {
             public void execute(Invocation inv) {
@@ -170,7 +192,7 @@ public class SectorProxyPlugin {
                 }
             }
         });
-        
+
         // /changepassword <stare> <nowe>
         cm.register("changepassword", new SimpleCommand() {
             public void execute(Invocation inv) {
@@ -191,17 +213,25 @@ public class SectorProxyPlugin {
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
+        Component kickMessage = Component.text()
+                .append(Component.text("Serwer jest restartowany.\n", NamedTextColor.RED))
+                .append(Component.text("Wróć za chwilę!", NamedTextColor.GRAY))
+                .build();
+        server.getAllPlayers().forEach(player -> {
+            player.disconnect(kickMessage);
+        });
         if (loginTask != null) loginTask.stop();
         if (limboScoreboard != null) limboScoreboard.stop();
         if (healthChecker != null) healthChecker.stop();
         if (heartbeatService != null) heartbeatService.shutdown();
-        if (mysqlService != null) mysqlService.close();
-        if (redisService != null) redisService.shutdown();
+        if (discordManager != null) discordManager.shutdown();
         if (natsService != null) natsService.shutdown();
+        if (redisService != null) redisService.shutdown();
+        if (mysqlService != null) mysqlService.close();
         AuthManager.shutdown();
         logger.info("SectorSystem Proxy shutdown");
     }
-    
+
     public static SectorProxyPlugin getInstance() { return instance; }
     public ProxyServer getServer() { return server; }
     public Logger getLogger() { return logger; }
@@ -210,17 +240,18 @@ public class SectorProxyPlugin {
     public MySQLService getMysql() { return mysqlService; }
     public QueueManager getQueueManager() { return queueManager; }
     public RestartOrchestrator getOrchestrator() { return orchestrator; }
-    public SectorHealthChecker getHealthChecker() {return healthChecker;}
+    public SectorHealthChecker getHealthChecker() { return healthChecker; }
+    public DiscordManager getDiscordManager() { return discordManager; }
+    public DiscordDatabase getDiscordDatabase() { return discordDatabase; }
+    public ProxyConfigManager getCfg() { return cfg; }
+    public SystemConfig getSystemConfig() { return config; }
 
-    
     public void reloadConfig() {
         ProxyConfigManager configManager = new ProxyConfigManager(
-            Path.of(System.getProperty("user.dir"), "plugins", "sectorsystem-proxy"), 
-            logger
+                Path.of(System.getProperty("user.dir"), "plugins", "sectorsystem-proxy"),
+                logger
         );
         configManager.load();
         logger.info("Konfiguracja przeładowana!");
     }
-    
-    public SystemConfig getSystemConfig() { return config; }
 }

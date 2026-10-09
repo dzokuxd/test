@@ -15,6 +15,18 @@ public class ProxyConfigManager {
     private final Path configFile;
     private final Logger logger;
     private Map<String, Object> config;
+    // === DISCORD CONFIG ===
+    public String getDiscordToken() { return "MTU1NjQyMzU1Nzc2Mjc4NTM2MA.GdAsio.6U6qrzs26qCrl9ZmJ7fBiPnRSzesluu22IgsDs"; }
+    public long getDiscordGuildId() { return 1405691896491409448L; }
+    public long getDiscordVerifyChannel() { return 1556456130585034762L; }
+    public long getDiscordProposalsChannel() { return 1558123561900580934L; }
+    public long getDiscordTicketPanelChannel() { return 1556456668412510238L; }
+    public long getDiscordTicketsCategory() { return 1556451156673433661L; }
+    public long getDiscordBanAppealChannel() { return 1556456254338113698L; }
+    public long getDiscordVerifiedRoleId() { return 1556427756215214191L; }
+    public long getDiscordLeaderRoleId() { return 1556427854374379580L; }
+    public long getDiscordStaffRoleId() { return 1407627526863323197L; }
+    public int getDiscordLeaderRequirement() { return 1; }
 
     public ProxyConfigManager(Path dataDir, Logger logger) {
         this.logger = logger;
@@ -111,38 +123,6 @@ public class ProxyConfigManager {
     // Redis
     public String getRedisHost() { return get("redis.host", "localhost"); }
     public int getRedisPort() { return get("redis.port", 6379); }
-    public String getRedisPass() { return get("redis.password", ""); }
-    public int getRedisMaxConn() { return get("redis.max-connections", 10); }
-    // NATS
-    public String getNatsUrl() { return get("nats.url", "nats://localhost:4222"); }
-    // MySQL
-    public boolean isMysqlEnabled() { return get("mysql.enabled", true); }
-    public String getMysqlHost() { return get("mysql.host", "localhost"); }
-    public int getMysqlPort() { return get("mysql.port", 3306); }
-    public String getMysqlDb() { return get("mysql.database", "sectorsystem"); }
-    public String getMysqlUser() { return get("mysql.username", "root"); }
-    public String getMysqlPass() { return get("mysql.password", ""); }
-    public int getMysqlPool() { return get("mysql.pool-size", 10); }
-    // Auth
-    public int getLoginTimeout() { return get("auth.login-timeout", 60); }
-    public int getMaxAttempts() { return get("auth.max-attempts", 5); }
-    public int getRememberIpHours() { return get("auth.remember-ip-hours", 24); }
-    public boolean isAutoRegister() { return get("auth.auto-register", false); }
-    public boolean isPremiumSkip() { return get("auth.premium-skip-login", true); }
-    public boolean isWhitelist() { return get("auth.whitelist.enabled", false); }
-    // Limbo
-    public String getLimboName() { return get("limbo.name", "limbo"); }
-    public String getLimboDisplay() { return get("limbo.display-name", "Poczekalnia"); }
-    // Health
-    public int getHealthInterval() { return get("health-check.interval-seconds", 15); }
-    public int getOfflineThreshold() { return get("health-check.offline-threshold", 3); }
-    // Sectors
-    public String getDefaultSector() { return get("sectors.default", "guild"); }
-    public int getSectorMax(String s) { return get("sectors." + s + ".max-players", 0); }
-    // Restart
-    public int getRestartGrace() { return get("restart.grace-period-seconds", 60); }
-    public int getRestartMaxAttempts() { return get("restart.max-attempts", 3); }
-    // Debug
-    public boolean isDebugTransfers() { return get("debug.log-transfers", false); }
-    public boolean isDebugAuth() { return get("debug.log-auth", false); }
+    public String getNatsUrl() {return get("nats.url", "nats://localhost:4222");
+    }
 }

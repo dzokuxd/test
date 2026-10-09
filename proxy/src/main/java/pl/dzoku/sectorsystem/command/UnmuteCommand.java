@@ -2,16 +2,19 @@ package pl.dzoku.sectorsystem.command;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.proxy.Player;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import pl.sectorsystem.common.mysql.MySQLService;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 
 public class UnmuteCommand implements SimpleCommand {
-    private final javax.sql.DataSource dataSource;
+    private final MySQLService mysql;
 
-    public UnmuteCommand(javax.sql.DataSource dataSource) {
-        this.dataSource = dataSource;
+    public UnmuteCommand(MySQLService mysql) {
+        this.mysql = mysql;
     }
 
     @Override
@@ -25,21 +28,34 @@ public class UnmuteCommand implements SimpleCommand {
         }
 
         String targetName = args[0];
+        String executorName = source instanceof Player ? ((Player) source).getUsername() : "Konsola";
 
-        try (Connection conn = dataSource.getConnection()) {
-            String sql = "UPDATE discord_mutes SET unmuted = TRUE WHERE mc_nick = ? AND unmuted = FALSE";
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = mysql.getConnection()) {
+            // Najpierw sprawdź czy w ogóle istnieje aktywny mute
+            try (PreparedStatement checkPs = conn.prepareStatement(
+                    "SELECT mc_nick FROM discord_mutes WHERE mc_nick = ? AND unmuted = FALSE")) {
+                checkPs.setString(1, targetName);
+                if (!checkPs.executeQuery().next()) {
+                    source.sendMessage(Component.text("Gracz " + targetName + " nie jest obecnie wyciszony.", NamedTextColor.YELLOW));
+                    return;
+                }
+            }
+
+            // Ustaw unmuted = TRUE
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE discord_mutes SET unmuted = TRUE WHERE mc_nick = ? AND unmuted = FALSE")) {
                 ps.setString(1, targetName);
                 int rows = ps.executeUpdate();
 
                 if (rows > 0) {
-                    source.sendMessage(Component.text("✅ Gracz " + targetName + " został odciszony.", NamedTextColor.GREEN));
+                    source.sendMessage(Component.text("✅ Gracz " + targetName + " został odciszony przez " + executorName + ".", NamedTextColor.GREEN));
                 } else {
-                    source.sendMessage(Component.text("Gracz " + targetName + " nie jest wyciszony lub nie istnieje.", NamedTextColor.YELLOW));
+                    source.sendMessage(Component.text("Nie udało się odciszyć gracza " + targetName + ".", NamedTextColor.RED));
                 }
             }
         } catch (Exception e) {
             source.sendMessage(Component.text("Błąd bazy danych: " + e.getMessage(), NamedTextColor.RED));
+            e.printStackTrace();
         }
     }
 }

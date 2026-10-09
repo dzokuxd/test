@@ -7,14 +7,8 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import pl.dzoku.sectorsystem.RestartOrchestrator;
 import pl.dzoku.sectorsystem.SectorProxyPlugin;
 import pl.dzoku.sectorsystem.managers.AuthManager;
-
 import java.util.Optional;
 
-/**
- * Backup: każde wejście na LIMBO kończy się dodaniem do kolejki,
- * jeśli gracz jest zautoryzowany. Używa sektora, z którego gracz
- * przyszedł na limbo (event.getPreviousServer), a nie hardcoded "guild".
- */
 public class LimboQueueListener {
     private final SectorProxyPlugin plugin;
 

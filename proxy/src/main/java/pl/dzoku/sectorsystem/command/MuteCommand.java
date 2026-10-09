@@ -3,19 +3,24 @@ package pl.dzoku.sectorsystem.command;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import pl.dzoku.sectorsystem.TimeUtil;
+import pl.sectorsystem.common.mysql.MySQLService;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.UUID;
 
 public class MuteCommand implements SimpleCommand {
-    private final javax.sql.DataSource dataSource;
+    private final MySQLService mysql;
+    private final ProxyServer proxy;
 
-    public MuteCommand(javax.sql.DataSource dataSource) {
-        this.dataSource = dataSource;
+    public MuteCommand(MySQLService mysql, ProxyServer proxy) {
+        this.mysql = mysql;
+        this.proxy = proxy;
     }
 
     @Override
@@ -25,6 +30,7 @@ public class MuteCommand implements SimpleCommand {
 
         if (args.length < 3) {
             source.sendMessage(Component.text("Użycie: /mute <nick> <czas> <powód>", NamedTextColor.RED));
+            source.sendMessage(Component.text("Przykład: /mute dzokv 2h Spam", NamedTextColor.GRAY));
             return;
         }
 
@@ -41,40 +47,79 @@ public class MuteCommand implements SimpleCommand {
             return;
         }
 
-        UUID targetUuid = getUuid(targetName); // Użyj swojego CacheManagera
+        UUID targetUuid = getUuidFromDatabase(targetName);
         if (targetUuid == null) {
             source.sendMessage(Component.text("Nie znaleziono gracza: " + targetName, NamedTextColor.RED));
             return;
         }
-
+        String discordId = getDiscordId(targetUuid.toString());
         long expiresAt = durationMs == 0 ? 0 : System.currentTimeMillis() + durationMs;
         String timeFormatted = TimeUtil.formatTime(durationMs);
 
-        try (Connection conn = dataSource.getConnection()) {
-            String sql = "INSERT INTO discord_mutes (uuid, mc_nick, reason, muted_by, muted_at, expires_at, unmuted) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, FALSE) " +
+        try (Connection conn = mysql.getConnection()) {
+            String sql = "INSERT INTO discord_mutes (uuid, discord_id, mc_nick, reason, muted_by, muted_at, expires_at, unmuted) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, FALSE) " +
                     "ON DUPLICATE KEY UPDATE reason=VALUES(reason), muted_by=VALUES(muted_by), " +
                     "muted_at=VALUES(muted_at), expires_at=VALUES(expires_at), unmuted=FALSE";
 
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, targetUuid.toString());
-                ps.setString(2, targetName);
-                ps.setString(3, reason);
-                ps.setString(4, executorName);
-                ps.setLong(5, System.currentTimeMillis());
-                ps.setLong(6, expiresAt);
+                ps.setString(2, discordId);
+                ps.setString(3, targetName);
+                ps.setString(4, reason);
+                ps.setString(5, executorName);
+                ps.setLong(6, System.currentTimeMillis());
+                ps.setLong(7, expiresAt);
                 ps.executeUpdate();
             }
 
-            source.sendMessage(Component.text("✅ Gracz " + targetName + " został wyciszony na " + timeFormatted + ". Powód: " + reason, NamedTextColor.GREEN));
+            String msg = durationMs == 0
+                    ? "Gracz " + targetName + " został wyciszony permanentnie. Powód: " + reason
+                    : "Gracz " + targetName + " został wyciszony na " + timeFormatted + ". Powód: " + reason;
+
+            source.sendMessage(Component.text("✅ " + msg, NamedTextColor.GREEN));
+
+            // Opcjonalnie: wyślij wiadomość do gracza online (nie wyrzuca go, tylko informuje)
+            proxy.getPlayer(targetUuid).ifPresent(player -> {
+                player.sendMessage(Component.text()
+                        .append(Component.text("Zostałeś wyciszony!\n", NamedTextColor.RED))
+                        .append(Component.text("Powód: ", NamedTextColor.GRAY))
+                        .append(Component.text(reason, NamedTextColor.WHITE))
+                        .append(Component.newline())
+                        .append(Component.text("Czas: ", NamedTextColor.GRAY))
+                        .append(Component.text(timeFormatted, NamedTextColor.WHITE))
+                        .append(Component.newline())
+                        .append(Component.text("Wyciszył: ", NamedTextColor.GRAY))
+                        .append(Component.text(executorName, NamedTextColor.WHITE))
+                        .build());
+            });
 
         } catch (Exception e) {
             source.sendMessage(Component.text("Błąd bazy danych: " + e.getMessage(), NamedTextColor.RED));
+            e.printStackTrace();
         }
     }
 
-    private UUID getUuid(String name) {
-        // ZASTĄP TO: return pl.dzoku.sectorsystem.proxy.cache.PlayerCache.getUuid(name);
+    private UUID getUuidFromDatabase(String username) {
+        if (!mysql.isEnabled()) return null;
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT uuid FROM auth_players WHERE username = ?")) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return UUID.fromString(rs.getString("uuid"));
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+    private String getDiscordId(String uuid) {
+        if (!mysql.isEnabled()) return null;
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT discord_id FROM discord_linked WHERE uuid = ?")) {
+            ps.setString(1, uuid);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString("discord_id");
+            }
+        } catch (Exception ignored) {}
         return null;
     }
 }
